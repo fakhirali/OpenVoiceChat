@@ -10,3 +10,4 @@ TTS
 piper-tts
 piper-phonemize
 vosk
+seamless_communication @ git+https://github.com/facebookresearch/seamless_communication
