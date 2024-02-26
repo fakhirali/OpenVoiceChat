@@ -1,24 +1,48 @@
-# Voice Chat
+<div align="center">
 
-Trying to create a pipeline where I can talk to an LLM.
+![logo](media/logo.gif)
 
-STT + LLM + TTS
+<h3>
 
-## What models should be used?
+Have a natural conversation with an LLM
 
-| STT | TTS | LLM |
-| --- | --- | --- |
-| [VITS](https://jaywalnut310.github.io/vits-demo/index.html) | [Whisper](https://github.com/openai/whisper) | [gpt-neo](https://huggingface.co/EleutherAI/gpt-neo-2.7B) atm |
+</h3>
+
+</div>
+
+---
+
+Uses open source stt, tts and llm models.
+Supports interruptions with the help of [silero VAD](https://github.com/snakers4/silero-vad).
+Well [abstracted](/llm) apis, easy to use and extend.
+Runs locally on a [consumer GPU](https://www.nvidia.com/en-us/geforce/graphics-cards/30-series/rtx-3080-3080ti/).
+[Installation](INSTALL.md).
+Some ideas are [here](notes/Ideas.md)
 
 
+```shell 
+python main.py
+```
 
-## TODO:
-- [x] ~~Fix LLM log (or atleast test it to make sure it works)~~ seems to work
-- [ ] Handle interruptions
-- [ ] Better LLM prompt
+---
+
+### Features
+- low latency
+- handles interruptions
+- supports multiple stt, tts and llm models from different sources
 
 
-## Notes
-How to handle interruptions? We constantly listen and transcribe and then stop tts. TTS has to stop on a word to make it natural. 
-Also do we even stop. Sometimes the other person just says "yes" or "yeah". The stop recording policy is bad, it just stops recording after x
-number of silent seconds. There should be an EOS predictor for whisper and we should stop using it, this will allow having pauses in the middle.
+### TODO:
+- [ ] OpenAI GPT support
+- [ ] Streaming everything (stt, tts, llm)
+- [ ] UI
+- [ ] Web interface/API
+- [ ] Good abstractions for streaming stt output (vosk, wav2vec2 can be streamed)
+
+### Bug Fix:
+- [ ] stt hf model should be able to tkae any models not just whisper
+- [ ] Fix streaming tortoise interruption
+- [ ] Better tts abstractions with multiple_say and interruption
+- [ ] Super classes of stt, tts and llm for the things that are common
+- [ ] Sounddevice underrun error
+

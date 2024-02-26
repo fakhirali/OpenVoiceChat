@@ -1,47 +1,90 @@
 import numpy as np
 import pyaudio
 import audioop
-def record(silence_seconds):
-    seconds_silence = silence_seconds  # changing this might make the convo more natural
-    CHUNK = 1024
-    FORMAT = pyaudio.paInt16
-    CHANNELS = 1  # make sure this is 1
-    RATE = 16000
-    RECORD_SECONDS = 100
-    WAVE_OUTPUT_FILENAME = "user.wav"
 
+CHUNK = int(1024*2)
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 16000
+
+
+def make_stream():
     p = pyaudio.PyAudio()
+    return p.open(format=FORMAT,
+                  channels=CHANNELS,
+                  rate=RATE,
+                  input=True,
+                  frames_per_buffer=CHUNK)
 
-    stream = p.open(format=FORMAT,
-                    channels=CHANNELS,
-                    rate=RATE,
-                    input=True,
-                    frames_per_buffer=CHUNK)
 
-    print("* recording")
+# def record_audio(record_seconds=100):
+#     # yield audio frames
+#
+#     RECORD_SECONDS = record_seconds
+#
+#     stream = make_stream()
+#
+#     for i in range(0, int(RATE / CHUNK * RECORD_SECONDS)):
+#         data = stream.read(CHUNK)
+#         yield data
+#
 
+
+def record_interruption_parallel(vad, listen_queue):
+    #listen for interruption untill the queue is not empty
+    frames = []
+    stream = make_stream()
+    while True:
+        a = listen_queue.get()
+        if a is None:
+            break
+        data = stream.read(CHUNK)
+        frames.append(data)
+        contains_speech = vad.contains_speech(frames[int(RATE / CHUNK) * -2:])
+        if contains_speech:
+            stream.close()
+            frames = np.frombuffer(b''.join(frames), dtype=np.int16)
+            frames = frames / (1 << 15)
+            return frames.astype(np.float32)
+    stream.close()
+    return None
+
+
+def record_interruption(vad, recond_seconds=100):
+    print("* recording for interruption")
+    frames = []
+    stream = make_stream()
+    for _ in range(0, int(RATE / CHUNK * recond_seconds)):
+        data = stream.read(CHUNK)
+        frames.append(data)
+        contains_speech = vad.contains_speech(frames[int(RATE / CHUNK) * -2:])
+        if contains_speech:
+            stream.close()
+            frames = np.frombuffer(b''.join(frames), dtype=np.int16)
+            frames = frames / (1 << 15)
+            return frames.astype(np.float32)
+    stream.close()
+    return None
+
+
+def record_user(silence_seconds, vad):
     frames = []
 
     started = False
     one_second_iters = int(RATE / CHUNK)
-    silent_iters = 0
+    stream = make_stream()
+    print("* recording")
 
-    for i in range(0, int(RATE / CHUNK * RECORD_SECONDS)):
+    while True:
         data = stream.read(CHUNK)
         frames.append(data)
-        rms = audioop.rms(data, p.get_sample_size(FORMAT))
-        decibel = 20 * np.log10(rms)
-        if not started and decibel > 50:
+        contains_speech = vad.contains_speech(frames[-one_second_iters * silence_seconds:])
+        if not started and contains_speech:
             started = True
-
-        if started and decibel < 50:
-            silent_iters += 1
-
-        if started and decibel > 50:
-            silent_iters = 0
-
-        if silent_iters >= one_second_iters * seconds_silence:
+            print("*listening to speech*")
+        if started and contains_speech is False:
             break
+    stream.close()
 
     print("* done recording")
 

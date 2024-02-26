@@ -31,11 +31,9 @@ JOHN is a saleman for Fakhir's tea. JOHN has been selling the tea his entire lif
 [JOHN] No problem at all. Trust me, once you try Fakhir's Tea, you'll never want to go back to regular old tea again.
 [USER] '''
 
-
-
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-translator = Translator(device)
+translator = Translator(device, lang='eng')
 john = Chatbot(device=device)
 
 preprompt = sales_pre_prompt
@@ -53,10 +51,10 @@ while True:
         break
     break_word = '[USER]'
     name = '[JOHN]'
-    response,past_kv,next_id = john.generate_response_greedy(user_input, preprompt + log,
-                                        break_word,max_length=100000, name=name,
-                                        past_key_vals=past_kv, next_id=next_id, 
-                                        verbose=False, temp=0.6)
+    response, past_kv, next_id = john.generate_response_greedy(user_input, preprompt + log,
+                                                               break_word, max_length=100000, name=name,
+                                                               past_key_vals=past_kv, next_id=next_id,
+                                                               verbose=False, temp=0.6)
     translated_text = translator.say(response.replace('[USER]', ''))
     # print(translated_text, response)
     log += ' ' + user_input + '\n' + name + response

@@ -1,0 +1,12 @@
+transformers
+sounddevice
+pygame
+pyaudio
+phonemizer
+librosa
+piper-tts
+tortoise-tts
+TTS
+piper-tts
+piper-phonemize
+vosk
