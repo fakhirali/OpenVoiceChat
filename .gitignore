@@ -4,3 +4,4 @@ __pycache__/
 models/
 notes/_*
 venv/
+data/
