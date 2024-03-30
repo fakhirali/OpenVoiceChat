@@ -1,14 +1,17 @@
 from tts.tts_piper import Mouth_piper as Mouth
+from tts.tts_elevenlabs import Mouth_elevenlabs as Mouth
 # from tts.tts_xtts import Mouth_xtts as Mouth
 
-from llm import Chatbot_llama as Chatbot
+from llm.llm_llama import Chatbot_llama as Chatbot
+# from llm.llm_gpt import Chatbot_gpt as Chatbot
+
 # from llm import Chatbot_hf as Chatbot
 
 from stt.stt_hf import Ear_hf as Ear
 # from stt.stt_vosk import Ear_vosk as Ear
 
 import torch
-from preprompts import call_pre_prompt
+from preprompts import call_pre_prompt, llama_sales
 import torchaudio
 import torchaudio.functional as F
 import numpy as np
@@ -25,10 +28,10 @@ if __name__ == "__main__":
     audio = F.resample(audio, sr, 16_000)[0]
     ear.transcribe(np.array(audio))
 
-    john = Chatbot(device=device, sys_prompt=call_pre_prompt)
+    john = Chatbot(sys_prompt=call_pre_prompt)
 
-    mouth = Mouth(device=device)
-    mouth.say('Good morning!', ear.interrupt_listen)
+    mouth = Mouth()
+    mouth.say_text('Good morning!')
 
     print("type: exit, quit or stop to end the chat")
     print("Chat started:")
@@ -51,5 +54,7 @@ if __name__ == "__main__":
         tts_thread.join()
         llm_thread.join()
 
-        if '[END]' in llm_output_queue.get():
+        res = llm_output_queue.get()
+        print(res)
+        if '[END]' in res:
             break

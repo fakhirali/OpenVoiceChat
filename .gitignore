@@ -5,3 +5,4 @@ models/
 notes/_*
 venv/
 data/
+.env
