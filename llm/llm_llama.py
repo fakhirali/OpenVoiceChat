@@ -1,8 +1,9 @@
 from preprompts import call_pre_prompt
 from llama_cpp import Llama
+from llm.base import BaseChatbot
 
 
-class Chatbot:
+class Chatbot_llama(BaseChatbot):
     def __init__(self, model_path='models/llama-2-7b.Q4_K_M.gguf', device='cuda', sys_prompt='',
                  break_words=None, name='[JOHN]'):
         if break_words is None:
@@ -16,7 +17,7 @@ class Chatbot:
         self.messages = []
         self.messages.append(self.sys_prompt)
 
-    def generate_response(self, input_text):
+    def run(self, input_text):
         self.messages.append(input_text + '\n' + self.name)
         out = self.model.create_completion(''.join(self.messages),
                                            max_tokens=1000, stream=True)
@@ -24,15 +25,18 @@ class Chatbot:
         for o in out:
             text = o['choices'][0]['text']
             response_text += text
+            yield text
             if any([response_text.strip().endswith(break_word) for break_word in self.break_words]):
                 break
-        self.messages.append(response_text)
-        return response_text
+
+    def post_process(self, response):
+        self.messages.append(response)
+        return response
 
 
 if __name__ == "__main__":
     preprompt = call_pre_prompt
-    john = Chatbot(model_path='../models/llama-2-7b.Q4_K_M.gguf', sys_prompt=preprompt)
+    john = Chatbot_llama(model_path='../models/llama-2-7b.Q4_K_M.gguf', sys_prompt=preprompt)
     print("type: exit, quit or stop to end the chat")
     print("Chat started:")
     while True:

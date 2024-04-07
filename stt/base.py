@@ -3,6 +3,7 @@ import torch
 from utils import record_user, record_interruption
 from vad import VoiceActivityDetection
 import re
+from time import monotonic
 
 
 
@@ -22,6 +23,14 @@ class BaseEar:
         audio = record_user(self.silence_seconds, self.vad)
         text = self.transcribe(audio)
         return text
+
+    def listen_timing(self):
+        audio = record_user(self.silence_seconds, self.vad)
+        start = monotonic()
+        text = self.transcribe(audio)
+        end = monotonic()
+        return text, end - start
+
 
     def interrupt_listen(self, record_seconds=100):
         while record_seconds > 0:
