@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+  <head>
+    <meta charset="UTF-8" />
+
+    <title>OpenVoiceChat</title>
+    <style>
+      body {
+        font-family: "Lucida Console", monospace;
+        font-size: 18px;
+        color: #111;
+        background-color: white;
+        max-width: 90vw;
+        margin: 0 auto;
+        padding: 0 50px;
+        box-sizing: border-box;
+      }
+      code {
+        font-family: Consolas, "courier new";
+        color: crimson;
+        background-color: #f1f1f1;
+        padding: 2px;
+        font-size: 105%;
+      }
+      .landing {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        min-height: 100dvh;
+        text-align: center;
+      }
+      .separator {
+        letter-spacing: -9px;
+      }
+      hr {
+        border: none;
+        height: 2px;
+        background-color: lightgrey;
+        width: 100%;
+        margin: 30px auto;
+      }
+      table {
+        border-collapse: collapse;
+        text-align: center;
+        width: 100%;
+      }
+      td {
+        padding: 5px 20px;
+        border: 1px solid #dddddd;
+      }
+      .quiet,
+      .links-container a {
+        color: inherit;
+      }
+      .links-container {
+        font-size: 24px;
+        margin: 20px;
+      }
+      .links-container a {
+        text-decoration: none;
+        margin: 0 10px;
+      }
+      .faqtable dt {
+        margin-bottom: 0.75em;
+        font-style: oblique;
+      }
+      .faqtable dd {
+        margin-left: 0;
+        margin-bottom: 2em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="landing">
+      <img src="main_logo.png" alt="OpenVoiceChat" />
+      <div class="links-container">
+        <a href="#openvoicechat">OpenVoiceChat</a>
+        <span class="separator">|</span>
+        <a href="#get-started">Get Started</a>
+        <span class="separator">|</span>
+<!--        <a href="#contribute">Contribute</a>-->
+<!--        <span class="separator">|</span>-->
+        <a href="#faq">FAQ</a>
+        <span class="separator">|</span>
+        <a href="https://github.com/fakhirali/OpenVoiceChat">Github</a>
+      </div>
+    </div>
+
+    <hr />
+    <h2 id="openvoicechat">OpenVoiceChat</h2>
+    <p>
+      <a href="https://github.com/fakhirali/OpenVoiceChat"> OpenVoiceChat</a> is
+      an opensource library that allows you to have natural voice conversations
+      with your LLM agent.<br /><br />
+
+      If you plan on making an LLM agent and want to have your users be able to
+      talk to it like a person (low latency, handles interruptions), this
+      library is for you. <br /><br />
+
+      It aims to be the opensource, highly
+      <a
+        href="https://github.com/fakhirali/OpenVoiceChat/blob/master/notes/Adding_models.md"
+        >extensible</a
+      >
+      and easy to use alternative to the proprietary
+      <a
+        href="https://github.com/fakhirali/OpenVoiceChat/blob/master/notes/Competition.md"
+        >solutions</a
+      >.
+    </p>
+    <hr />
+
+    <h2 id="get-started">Get Started</h2>
+    Install it using pip:
+    <br />
+    <br />
+    <code> pip install openvoicechat </code>
+    <br />
+    <br />
+   Refer to the <a
+        href="https://www.finityalpha.com/OpenVoiceChat/home/"
+        >Documentation</a
+      > for more.
+
+    <!-- <h2 id="updates">Updates</h2>
+    <table>
+      <tr>
+        <td>2024-04-30</td>
+        <td>The First prototype of the webpage was made (template taken from <a href="https://tinygrad.org/">tinygrad.org</a>)</td>
+      </tr>
+      <tr>
+        <td>2023-09-09</td>
+        <td>OVC became live</td>
+      </tr>
+    </table>
+    <hr /> -->
+
+<!--    <h2 id="contribute">Contribute</h2>-->
+<!--    See-->
+<!--    <a-->
+<!--      href="https://docs.google.com/spreadsheets/d/1d2MZTa9FKM4IHLrBs_nMuA2yuLaSY4USzdGH6vRdPbU/edit#gid=0"-->
+<!--      >our bounty page.</a-->
+<!--    > Join our <a href="https://discord.gg/M5S2JksapH">Discord</a>-->
+<!--    <br />-->
+<!--    <hr />-->
+
+    <h2 id="faq">FAQ</h2>
+    <dl class="faqtable">
+      <!-- <dt>Q. How can I integrate OVC in my application?</dt>
+      <dd>
+        A. You can refer to
+        <a href="https://github.com/fakhirali/OpenVoiceChat">the github repo</a>
+        and there you will find an extensive guide on how to integrate OVC in
+        your application.
+      </dd> -->
+      <dt>
+        Q. How do I add support for my own STT/LLM/TTS model in OpenVoiceChat?
+      </dt>
+      <dd>
+        A. It is very easy to add support for you own model. You can refer to
+        <a
+          href="https://github.com/fakhirali/OpenVoiceChat/blob/master/notes/Adding_models.md"
+          >the adding models guide</a
+        >
+        to learn about how to add support for your own STT/LLM/TTS models.
+      </dd>
+      <dt>Q. What are the models supported?</dt>
+      <dd>
+        A. All of huggingface, llama-cpp-python, openai, deepgram, and
+        <a href="https://github.com/fakhirali/OpenVoiceChat/blob/master/notes/Models.md">
+          more</a>
+      </dd>
+      <dt>Q. How does it work?</dt>
+      <dd>
+        A. Look at
+        <a href="https://github.com/fakhirali/OpenVoiceChat"
+          >the code on github</a
+        >
+        or
+        <a
+          href="https://github.com/fakhirali/OpenVoiceChat/blob/master/notes/Working.md"
+          >read here</a
+        >.
+
+      </dd>
+    </dl>
+  </body>
+</html>
