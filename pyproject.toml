@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openvoicechat"
+version = "0.3.0"
+description = "A tiny async voice conversation engine with a Daily.co agent service"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Finity Alpha", email = "fakhir.ali@finityalpha.com" }]
+dependencies = [
+    "httpx>=0.27",
+    "numpy>=1.26",
+    "onnxruntime>=1.17",
+    "openai>=1.40",
+    "pysbd>=0.3.4",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+agent = [
+    "daily-python>=0.14",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+]
+
+[tool.setuptools.packages.find]
+include = ["openvoicechat*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
