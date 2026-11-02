@@ -165,6 +165,7 @@ class Conversation:
         sentences: asyncio.Queue[str | None] = asyncio.Queue(maxsize=16)
         tts_task: asyncio.Task | None = None
         response = ""
+        completed = False
         try:
             text = (await self.speech.transcribe(pcm)).strip()
             if not text:
@@ -204,14 +205,19 @@ class Conversation:
             if response.strip():
                 self.messages.append({"role": "assistant", "content": response})
                 self._emit("assistant", response)
+                completed = True
         except asyncio.CancelledError:
             partial = " ".join(spoken).strip()
-            if partial:
+            if partial and not completed:
                 self.messages.append({"role": "assistant", "content": partial})
                 self._emit("assistant", partial)
             raise
         except Exception as exc:
             log.exception("conversation turn failed")
+            partial = " ".join(spoken).strip()
+            if partial and not completed:
+                self.messages.append({"role": "assistant", "content": partial})
+                self._emit("assistant", partial)
             self._emit("error", str(exc))
         finally:
             self._trim_history()

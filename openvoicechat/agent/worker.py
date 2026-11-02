@@ -94,6 +94,8 @@ async def main(meeting_url: str, prompt: str, conversation_id: str) -> None:
                 data = await loop.run_in_executor(None, speaker.read_frames, FRAME_SAMPLES)
                 if data:
                     await conversation.input.put(bytes(data))
+                else:
+                    await asyncio.sleep(0.01)
 
         async def send_audio() -> None:
             while not stop.is_set():
@@ -111,7 +113,18 @@ async def main(meeting_url: str, prompt: str, conversation_id: str) -> None:
 
         waiter = asyncio.create_task(stop.wait(), name="stop")
         try:
-            await asyncio.wait((waiter, tasks[0]), return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(
+                (waiter, *tasks), return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in done - {waiter}:
+                if task.cancelled():
+                    continue
+                if task.exception() is not None:
+                    print(
+                        f"{task.get_name()} failed: {task.exception()}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
         finally:
             waiter.cancel()
             await asyncio.gather(waiter, return_exceptions=True)
