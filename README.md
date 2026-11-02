@@ -76,6 +76,19 @@ LLM_MODEL=llama3.1-8b
 The Silero VAD ONNX model is downloaded once to
 `~/.cache/openvoicechat/silero_vad.onnx`.
 
+## One-command Daily test
+
+This creates a public Daily room, starts the agent server, joins the agent, tails
+the transcript, and cleans up the room/server when you press `Ctrl-C`:
+
+```bash
+python scripts/daily_test.py --open
+```
+
+Options: `--prompt`, `--conversation-id`, `--port`, `--keep-room`, and `--open`
+(open the room in your browser). The script checks that the required keys are in
+`.env` and prints the transcript, agent log, and recording paths.
+
 ## Run the agent server
 
 ```bash
