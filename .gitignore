@@ -12,3 +12,6 @@ venv/
 data/
 .pytest_cache/
 .ruff_cache/
+
+# Private notes and reviews
+notes/
