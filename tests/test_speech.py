@@ -86,7 +86,7 @@ async def test_synthesize_request_and_pcm():
     assert request.headers["xi-api-key"] == "e"
     body = json.loads(request.content)
     assert body["text"] == "Hi there."
-    assert body["model_id"] == "eleven_flash_v2_5"
+    assert body["model_id"] == "eleven_v4_turbo"
     assert body["voice_settings"] == {"stability": 0.5, "similarity_boost": 0.75}
 
 

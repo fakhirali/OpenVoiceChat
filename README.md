@@ -137,7 +137,8 @@ python -m openvoicechat.agent.recorder <meeting_url> --output data/recordings/me
 | `OUTPUT_CHUNK_MS` | `100` | TTS chunk size written to Daily |
 
 `DEEPGRAM_MODEL`, `ELEVENLABS_MODEL`, and `LLM_MODEL` also affect latency;
-`eleven_flash_v2_5` and small LLMs give the quickest responses.
+`eleven_v4_turbo` (or the cheaper `eleven_flash_v2_5`) and small LLMs give the
+quickest responses.
 
 ## Tests
 

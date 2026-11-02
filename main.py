@@ -16,21 +16,33 @@ from openvoicechat.speech import Speech
 DEFAULT_PROMPT = "You are a concise, friendly voice assistant."
 SPEECH_RATE = 16000
 FRAME_SECONDS = 0.032
+SPEECH_FRAME_BYTES = 512 * 2
 
 
-def _resample(pcm: bytes, source: int, target: int) -> bytes:
-    if not pcm or source == target:
-        return pcm
-    import soxr
+class _Pcm16Resampler:
+    """Stateful PCM16 resampler; avoids clicks at chunk boundaries."""
 
-    audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-    audio = soxr.resample(audio, source, target)
-    return (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+    def __init__(self, source: int, target: int):
+        self._identity = source == target
+        if not self._identity:
+            import soxr
+
+            self._stream = soxr.ResampleStream(
+                source, target, 1, dtype="int16", quality="HQ"
+            )
+
+    def process(self, pcm: bytes) -> bytes:
+        if not pcm or self._identity:
+            return pcm
+        data = np.frombuffer(pcm, dtype=np.int16)
+        return self._stream.resample_chunk(data, last=False).tobytes()
 
 
-def _default_rate(sounddevice, kind: str) -> int:
+def _default_rate(sounddevice, kind: str, device=None) -> int:
     try:
-        return round(float(sounddevice.query_devices(kind=kind)["default_samplerate"]))
+        return round(
+            float(sounddevice.query_devices(device, kind=kind)["default_samplerate"])
+        )
     except Exception:  # noqa: BLE001 - PortAudio raises its own exception types
         return 48000
 
@@ -44,21 +56,27 @@ def _device(value: str):
 
 async def _microphone(conversation: Conversation, stream, rate: int) -> None:
     frames = max(1, int(rate * FRAME_SECONDS))
+    resampler = _Pcm16Resampler(rate, SPEECH_RATE)
+    buffer = bytearray()
     while True:
         data, overflowed = await asyncio.to_thread(stream.read, frames)
         if overflowed:
             print("input overflow", file=sys.stderr, flush=True)
-        pcm = _resample(bytes(data), rate, SPEECH_RATE)
-        if pcm:
-            await conversation.input.put(pcm)
+        if not data:
+            await asyncio.sleep(0.01)
+            continue
+        buffer.extend(resampler.process(bytes(data)))
+        while len(buffer) >= SPEECH_FRAME_BYTES:
+            chunk = bytes(buffer[:SPEECH_FRAME_BYTES])
+            del buffer[:SPEECH_FRAME_BYTES]
+            await conversation.input.put(chunk)
 
 
 async def _speaker(conversation: Conversation, stream, rate: int) -> None:
+    resampler = _Pcm16Resampler(SPEECH_RATE, rate)
     while True:
         pcm = await conversation.output.get()
-        if pcm is None:
-            return
-        data = _resample(pcm, SPEECH_RATE, rate)
+        data = resampler.process(pcm)
         if data:
             await asyncio.to_thread(stream.write, data)
 
@@ -80,8 +98,8 @@ async def run(args: argparse.Namespace) -> None:
             system_prompt=args.prompt,
             on_turn=lambda role, text: print(f"{role.upper()}: {text}", flush=True),
         )
-        input_rate = _default_rate(sd, "input")
-        output_rate = _default_rate(sd, "output")
+        input_rate = _default_rate(sd, "input", args.input_device)
+        output_rate = _default_rate(sd, "output", args.output_device)
         print(
             f"Audio: mic {input_rate} Hz, speaker {output_rate} Hz, speech {SPEECH_RATE} Hz",
             flush=True,

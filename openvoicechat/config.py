@@ -29,7 +29,7 @@ class Config:
     deepgram_url: str = os.getenv("DEEPGRAM_URL", "https://api.deepgram.com/v1/listen")
     elevenlabs_api_key: str = os.getenv("ELEVENLABS_API_KEY", "")
     elevenlabs_voice_id: str = os.getenv("ELEVENLABS_VOICE_ID", "")
-    elevenlabs_model: str = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
+    elevenlabs_model: str = os.getenv("ELEVENLABS_MODEL", "eleven_v4_turbo")
     elevenlabs_url: str = os.getenv(
         "ELEVENLABS_URL", "https://api.elevenlabs.io/v1/text-to-speech"
     )
