@@ -29,6 +29,15 @@ local = [
     "sounddevice>=0.5",
     "soxr>=0.4",
 ]
+models = [
+    "torch>=2.4",
+    "transformers>=4.57",
+    "accelerate>=1.0",
+    "qwen-tts>=0.1",
+    "sentencepiece>=0.2",
+    "soundfile>=0.12",
+    "onnx-asr[hub]>=0.12",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",

@@ -60,6 +60,22 @@ On Linux you may need PortAudio: `sudo apt install libportaudio2`. Use
 timings. `Ctrl-C` stops it. Audio is resampled between the device rate and 16 kHz
 internally.
 
+## Local models (Parakeet + Qwen3-TTS)
+
+```bash
+pip install -e ".[local,models]"
+python main_local.py --verbose
+```
+
+`main.py --local` is equivalent. The first run downloads Parakeet (~2 GB) and
+Qwen3-TTS (~2 GB). An RTX 3080 Ti 12 GB runs both comfortably; CPU works but is
+slower. Default voice is Aiden; set `LOCAL_TTS_VOICE` / `LOCAL_TTS_LANGUAGE` to change it.
+
+Parakeet runs through `onnx-asr` because `qwen-tts` pins Transformers 4.57, which
+predates Parakeet TDT support; it is the same NVIDIA Parakeet TDT 0.6B v3
+checkpoint. The LLM still uses the OpenAI-compatible endpoint configured in
+`.env`, so `LLM_API_KEY` is required; only STT and TTS are local.
+
 ## Configure
 
 ```bash

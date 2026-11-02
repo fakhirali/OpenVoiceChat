@@ -90,7 +90,17 @@ async def run(args: argparse.Namespace) -> None:
             'Missing local audio dependencies. Install with: pip install -e ".[local]"'
         ) from exc
 
-    speech = Speech(Config())
+    if args.local:
+        try:
+            from openvoicechat.local_speech import LocalSpeech
+        except ImportError as exc:
+            raise SystemExit(
+                "Missing local model dependencies. Install with: "
+                'pip install -e ".[local,models]"'
+            ) from exc
+        speech = LocalSpeech()
+    else:
+        speech = Speech(Config())
     try:
         print("Loading VAD model...", flush=True)
         conversation = Conversation(
@@ -148,9 +158,15 @@ async def run(args: argparse.Namespace) -> None:
         await speech.aclose()
 
 
-def main() -> None:
+def main(local: bool = False) -> None:
     parser = argparse.ArgumentParser(
         description="Run the full local voice loop: microphone -> STT -> LLM -> TTS -> speaker"
+    )
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        default=local,
+        help="use local Parakeet STT + Qwen3-TTS",
     )
     parser.add_argument(
         "--prompt",
