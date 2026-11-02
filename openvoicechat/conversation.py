@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import math
+import time
 from collections import deque
 
 import pysbd
@@ -27,11 +28,13 @@ class Conversation:
         client: AsyncOpenAI | None = None,
         on_turn=None,
         vad=None,
+        verbose: bool = False,
     ):
         self.speech = speech
         self.config = config or Config()
         self.system_prompt = system_prompt
         self.on_turn = on_turn
+        self.verbose = verbose
         self._owns_client = client is None
         if client is None:
             if not self.config.llm_api_key:
@@ -111,10 +114,14 @@ class Conversation:
                         if voiced_run >= 2:
                             in_speech = True
                             speech_ms = voiced_run * self._frame_ms
+                            pre_roll_ms = len(pre_roll) * self._frame_ms
                             utterance = bytearray(b"".join(pre_roll)) + onset
                             utterance_ms = (len(pre_roll) + voiced_run) * self._frame_ms
                             pre_roll.clear()
                             onset.clear()
+                            self._log(
+                                f"speech start | pre-roll={pre_roll_ms:.0f}ms"
+                            )
                     else:
                         voiced_run = 0
                         onset.clear()
@@ -133,8 +140,15 @@ class Conversation:
                 if silence_ms < endpoint_ms and utterance_ms < max_utterance_ms:
                     continue
 
+                reason = "max-utterance" if utterance_ms >= max_utterance_ms else "silence"
+                self._log(
+                    f"endpoint ({reason}) | silence={silence_ms:.0f}ms "
+                    f"utterance={utterance_ms:.0f}ms speech={speech_ms:.0f}ms"
+                )
                 if speech_ms >= min_speech_ms and utterance:
                     self._turn_task = asyncio.create_task(self._turn(bytes(utterance)))
+                else:
+                    self._log(f"drop short utterance | speech={speech_ms:.0f}ms")
                 reset()
                 if not voiced and pre_roll.maxlen:
                     pre_roll.append(frame)
@@ -166,8 +180,16 @@ class Conversation:
         tts_task: asyncio.Task | None = None
         response = ""
         completed = False
+        started = time.monotonic()
+        self._log(
+            f"turn start | pcm={len(pcm) / 2 / self.config.sample_rate * 1000:.0f}ms"
+        )
         try:
+            stt_started = time.monotonic()
             text = (await self.speech.transcribe(pcm)).strip()
+            self._log(
+                f"STT ({1000 * (time.monotonic() - stt_started):.0f}ms): {text!r}"
+            )
             if not text:
                 return
             self.messages.append({"role": "user", "content": text})
@@ -176,6 +198,8 @@ class Conversation:
             tts_task = asyncio.create_task(self._speak(sentences, spoken))
             segmenter = pysbd.Segmenter(language="en", clean=False)
             buffer = ""
+            llm_started = time.monotonic()
+            first_token = True
             stream = await self.client.chat.completions.create(
                 model=self.config.llm_model,
                 messages=self.messages,
@@ -186,6 +210,11 @@ class Conversation:
                     token = getattr(getattr(choice, "delta", None), "content", None)
                     if not token:
                         continue
+                    if first_token:
+                        first_token = False
+                        self._log(
+                            f"LLM first token ({1000 * (time.monotonic() - llm_started):.0f}ms)"
+                        )
                     response += token
                     buffer += token
                     if any(mark in buffer for mark in ".!?\n"):
@@ -207,12 +236,14 @@ class Conversation:
                 self._emit("assistant", response)
                 completed = True
         except asyncio.CancelledError:
+            self._log(f"turn cancelled | spoken_sentences={len(spoken)}")
             partial = " ".join(spoken).strip()
             if partial and not completed:
                 self.messages.append({"role": "assistant", "content": partial})
                 self._emit("assistant", partial)
             raise
         except Exception as exc:
+            self._log(f"turn error: {exc!r}")
             log.exception("conversation turn failed")
             partial = " ".join(spoken).strip()
             if partial and not completed:
@@ -220,6 +251,7 @@ class Conversation:
                 self._emit("assistant", partial)
             self._emit("error", str(exc))
         finally:
+            self._log(f"turn finished ({1000 * (time.monotonic() - started):.0f}ms)")
             self._trim_history()
             if tts_task is not None:
                 if not tts_task.done():
@@ -232,7 +264,12 @@ class Conversation:
             sentence = await sentences.get()
             if sentence is None:
                 return
+            tts_started = time.monotonic()
             audio = await self.speech.synthesize(sentence)
+            self._log(
+                f"TTS ({1000 * (time.monotonic() - tts_started):.0f}ms, "
+                f"{len(audio)} bytes): {sentence!r}"
+            )
             if not audio:
                 continue
             spoken.append(sentence)
@@ -257,6 +294,9 @@ class Conversation:
         tts_task.result()
 
     async def _interrupt(self) -> None:
+        self._log(
+            f"barge-in | cancelling turn, output_chunks={self.output.qsize()}"
+        )
         task, self._turn_task = self._turn_task, None
         self.agent_speaking = False
         if task is not None and not task.done():
@@ -264,7 +304,10 @@ class Conversation:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         _drain(self.output)
-        print("User interrupted the assistant", flush=True)
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            print(f"[conversation] {message}", flush=True)
 
     def _emit(self, role: str, text: str) -> None:
         if self.on_turn is None:

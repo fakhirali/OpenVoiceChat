@@ -55,8 +55,10 @@ python main.py
 ```
 
 On Linux you may need PortAudio: `sudo apt install libportaudio2`. Use
-`--prompt`, `--input-device`, and `--output-device` as needed. `Ctrl-C` stops it.
-Audio is resampled between the device rate and 16 kHz internally.
+`--prompt`, `--input-device`, `--output-device`, and `--verbose` as needed.
+`--verbose` prints speech start/end, endpointing, STT, LLM first-token, and TTS
+timings. `Ctrl-C` stops it. Audio is resampled between the device rate and 16 kHz
+internally.
 
 ## Configure
 

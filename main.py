@@ -97,6 +97,7 @@ async def run(args: argparse.Namespace) -> None:
             speech,
             system_prompt=args.prompt,
             on_turn=lambda role, text: print(f"{role.upper()}: {text}", flush=True),
+            verbose=args.verbose,
         )
         input_rate = _default_rate(sd, "input", args.input_device)
         output_rate = _default_rate(sd, "output", args.output_device)
@@ -155,6 +156,12 @@ def main() -> None:
         "--prompt",
         default=os.getenv("SYSTEM_PROMPT", DEFAULT_PROMPT),
         help="system prompt",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="print VAD, endpointing, STT, LLM, and TTS timing details",
     )
     parser.add_argument("--input-device", type=_device, default=None, help="sounddevice input device")
     parser.add_argument(
