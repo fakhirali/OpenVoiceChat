@@ -45,6 +45,19 @@ For development:
 pip install -e ".[dev]"
 ```
 
+## Local loop (no Daily)
+
+To test the whole loop with your microphone and speakers:
+
+```bash
+pip install -e ".[local]"
+python main.py
+```
+
+On Linux you may need PortAudio: `sudo apt install libportaudio2`. Use
+`--prompt`, `--input-device`, and `--output-device` as needed. `Ctrl-C` stops it.
+Audio is resampled between the device rate and 16 kHz internally.
+
 ## Configure
 
 ```bash

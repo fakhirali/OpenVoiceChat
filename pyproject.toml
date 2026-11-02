@@ -25,6 +25,10 @@ agent = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
 ]
+local = [
+    "sounddevice>=0.5",
+    "soxr>=0.4",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
