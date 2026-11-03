@@ -15,7 +15,7 @@ def test_tuning_is_not_read_from_env(monkeypatch):
     assert config.endpoint_silence_ms == 600
     assert config.vad_threshold == 0.6
     assert config.max_sessions == 5
-    assert config.llm_model == "gpt-4.1-nano"
+    assert config.llm_model == "gpt-6-luna"
     assert config.llm_base_url == ""
 
 

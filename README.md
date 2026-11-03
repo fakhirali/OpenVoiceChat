@@ -148,7 +148,7 @@ Everything else is a field on `Config` in `openvoicechat/config.py`:
 from openvoicechat import Config
 
 config = Config(
-    llm_model="gpt-4.1-nano",
+    llm_model="gpt-6-luna",
     llm_base_url="",           # empty means https://api.openai.com/v1
     endpoint_silence_ms=400,
     vad_threshold=0.6,
@@ -160,7 +160,7 @@ everything else. Nothing besides secrets is read from the environment.
 
 ## LLM
 
-The default is OpenAI with `gpt-4.1-nano`. Point it elsewhere with flags:
+The default is OpenAI with `gpt-6-luna`. Point it elsewhere with flags:
 
 ```bash
 python main.py --base-url http://localhost:11434/v1 --model qwen3:4b

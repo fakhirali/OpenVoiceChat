@@ -14,7 +14,7 @@ from dotenv import find_dotenv, load_dotenv
 load_dotenv(find_dotenv(usecwd=True))
 
 DEFAULT_LLM_BASE_URL = ""  # empty means https://api.openai.com/v1
-DEFAULT_LLM_MODEL = "gpt-4.1-nano"
+DEFAULT_LLM_MODEL = "gpt-6-luna"
 
 
 @dataclass(frozen=True)
