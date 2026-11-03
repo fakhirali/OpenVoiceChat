@@ -1,4 +1,4 @@
-"""Run the full local voice loop: microphone -> VAD -> STT -> LLM -> TTS -> speaker."""
+"""Run the local voice loop: microphone -> VAD -> Parakeet -> LLM -> Kokoro -> speaker."""
 
 from __future__ import annotations
 
@@ -9,9 +9,7 @@ import sys
 
 import numpy as np
 
-from openvoicechat.config import Config
 from openvoicechat.conversation import Conversation
-from openvoicechat.speech import Speech
 
 DEFAULT_PROMPT = "You are a concise, friendly voice assistant."
 SPEECH_RATE = 16000
@@ -84,23 +82,19 @@ async def _speaker(conversation: Conversation, stream, rate: int) -> None:
 async def run(args: argparse.Namespace) -> None:
     try:
         import sounddevice as sd
-        import soxr  # noqa: F401
     except ImportError as exc:
         raise SystemExit(
-            'Missing local audio dependencies. Install with: pip install -e ".[local]"'
+            'Missing audio dependencies. Install with: pip install -e ".[local]"'
+        ) from exc
+    try:
+        from openvoicechat.local_speech import LocalSpeech
+    except ImportError as exc:
+        raise SystemExit(
+            "Missing local model dependencies. Install with: "
+            'pip install -e ".[models]"'
         ) from exc
 
-    if args.local:
-        try:
-            from openvoicechat.local_speech import LocalSpeech
-        except ImportError as exc:
-            raise SystemExit(
-                "Missing local model dependencies. Install with: "
-                'pip install -e ".[local,models]"'
-            ) from exc
-        speech = LocalSpeech()
-    else:
-        speech = Speech(Config())
+    speech = LocalSpeech()
     try:
         print("Loading VAD model...", flush=True)
         conversation = Conversation(
@@ -158,15 +152,9 @@ async def run(args: argparse.Namespace) -> None:
         await speech.aclose()
 
 
-def main(local: bool = False) -> None:
+def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run the full local voice loop: microphone -> STT -> LLM -> TTS -> speaker"
-    )
-    parser.add_argument(
-        "--local",
-        action="store_true",
-        default=local,
-        help="use local Parakeet STT + Kokoro TTS",
+        description="Run the local voice loop: microphone -> Parakeet -> LLM -> Kokoro"
     )
     parser.add_argument(
         "--prompt",
@@ -179,7 +167,9 @@ def main(local: bool = False) -> None:
         action="store_true",
         help="print VAD, endpointing, STT, LLM, and TTS timing details",
     )
-    parser.add_argument("--input-device", type=_device, default=None, help="sounddevice input device")
+    parser.add_argument(
+        "--input-device", type=_device, default=None, help="sounddevice input device"
+    )
     parser.add_argument(
         "--output-device", type=_device, default=None, help="sounddevice output device"
     )

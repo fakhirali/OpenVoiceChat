@@ -42,6 +42,8 @@ class Conversation:
             client = AsyncOpenAI(
                 api_key=self.config.llm_api_key,
                 base_url=self.config.llm_base_url or None,
+                timeout=self.config.llm_timeout_s,
+                max_retries=1,
             )
         self.client = client
         self.vad = vad or VAD(self.config.vad_threshold, self.config.sample_rate)
@@ -63,20 +65,24 @@ class Conversation:
         pre_roll: deque[bytes] = deque(
             maxlen=math.ceil(self.config.pre_roll_ms / self._frame_ms)
         )
-        onset = bytearray()
-        utterance = bytearray()
+        onset: list[bytes] = []
+        utterance: deque[bytes] = deque()
+        utterance_frames = 0
         voiced_run = 0
         in_speech = False
-        speech_ms = silence_ms = utterance_ms = 0.0
+        capped = False
+        speech_ms = silence_ms = 0.0
         endpoint_ms = self.config.endpoint_silence_ms
         min_speech_ms = self.config.min_speech_ms
         max_utterance_ms = self.config.max_utterance_ms
 
         def reset() -> None:
-            nonlocal in_speech, voiced_run, speech_ms, silence_ms, utterance_ms
+            nonlocal in_speech, voiced_run, capped, speech_ms, silence_ms, utterance_frames
             in_speech = False
             voiced_run = 0
-            speech_ms = silence_ms = utterance_ms = 0.0
+            capped = False
+            speech_ms = silence_ms = 0.0
+            utterance_frames = 0
             utterance.clear()
             onset.clear()
             pre_roll.clear()
@@ -110,13 +116,14 @@ class Conversation:
                 if not in_speech:
                     if voiced:
                         voiced_run += 1
-                        onset += frame
+                        onset.append(frame)
                         if voiced_run >= 2:
                             in_speech = True
                             speech_ms = voiced_run * self._frame_ms
                             pre_roll_ms = len(pre_roll) * self._frame_ms
-                            utterance = bytearray(b"".join(pre_roll)) + onset
-                            utterance_ms = (len(pre_roll) + voiced_run) * self._frame_ms
+                            utterance.extend(pre_roll)
+                            utterance.extend(onset)
+                            utterance_frames = len(pre_roll) + len(onset)
                             pre_roll.clear()
                             onset.clear()
                             self._log(
@@ -129,14 +136,29 @@ class Conversation:
                             pre_roll.append(frame)
                     continue
 
-                utterance += frame
-                utterance_ms += self._frame_ms
+                utterance.append(frame)
+                utterance_frames += 1
+                utterance_ms = utterance_frames * self._frame_ms
+
                 if voiced:
                     speech_ms += self._frame_ms
                     silence_ms = 0.0
-                else:
-                    silence_ms += self._frame_ms
+                    if utterance_ms >= max_utterance_ms:
+                        # Still talking past the cap: keep the most recent window and
+                        # wait for silence. Ending the turn mid-speech makes the next
+                        # voiced frame look like barge-in and cancels it.
+                        while utterance_frames > 1 and utterance_ms > max_utterance_ms:
+                            utterance.popleft()
+                            utterance_frames -= 1
+                            utterance_ms = utterance_frames * self._frame_ms
+                        if not capped:
+                            capped = True
+                            self._log(
+                                f"utterance capped | keeping last {utterance_ms:.0f}ms"
+                            )
+                    continue
 
+                silence_ms += self._frame_ms
                 if silence_ms < endpoint_ms and utterance_ms < max_utterance_ms:
                     continue
 
@@ -146,11 +168,13 @@ class Conversation:
                     f"utterance={utterance_ms:.0f}ms speech={speech_ms:.0f}ms"
                 )
                 if speech_ms >= min_speech_ms and utterance:
-                    self._turn_task = asyncio.create_task(self._turn(bytes(utterance)))
+                    self._turn_task = asyncio.create_task(
+                        self._turn(b"".join(utterance))
+                    )
                 else:
                     self._log(f"drop short utterance | speech={speech_ms:.0f}ms")
                 reset()
-                if not voiced and pre_roll.maxlen:
+                if pre_roll.maxlen:
                     pre_roll.append(frame)
         finally:
             self._stop.set()

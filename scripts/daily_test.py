@@ -155,14 +155,13 @@ def main() -> int:
     try:
         import uvicorn  # noqa: F401
     except ImportError as exc:
-        raise SystemExit('Install the agent extras: pip install -e ".[agent]"') from exc
+        raise SystemExit(
+            'Install the Daily extras: pip install -e ".[daily,models]"'
+        ) from exc
 
     load_dotenv(ROOT / ".env")
     _required("DAILY_API_KEY")
     _required("AGENT_API_TOKEN")
-    _required("DEEPGRAM_API_KEY")
-    _required("ELEVENLABS_API_KEY")
-    _required("ELEVENLABS_VOICE_ID")
     _required("LLM_API_KEY")
 
     token = os.environ["AGENT_API_TOKEN"]

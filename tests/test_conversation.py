@@ -18,8 +18,10 @@ class FakeVAD:
 class FakeSpeech:
     def __init__(self, chunks=1):
         self.chunks = chunks
+        self.transcribe_calls = 0
 
     async def transcribe(self, pcm16: bytes) -> str:
+        self.transcribe_calls += 1
         return "hello"
 
     async def synthesize(self, text: str) -> bytes:
@@ -111,6 +113,34 @@ async def test_history_ends_with_user_and_assistant():
     await wait_for_role(events, "assistant")
     assert conv.messages[0] == {"role": "system", "content": "You are helpful."}
     assert [message["role"] for message in conv.messages[-2:]] == ["user", "assistant"]
+
+    await stop(conv, run_task)
+
+
+async def test_max_utterance_waits_for_silence_instead_of_self_interrupting():
+    events = []
+    speech = FakeSpeech()
+    conv = Conversation(
+        speech,
+        config=Config(
+            endpoint_silence_ms=64,
+            min_speech_ms=32,
+            pre_roll_ms=0,
+            max_utterance_ms=96,
+            output_chunk_ms=100,
+        ),
+        client=FakeClient(),
+        on_turn=lambda role, text: events.append((role, text)),
+        vad=FakeVAD(),
+    )
+    run_task = asyncio.create_task(conv.run())
+    for _ in range(5):  # keep talking past the 96 ms cap
+        await conv.input.put(b"\x01")
+    for _ in range(2):  # then stop
+        await conv.input.put(b"\x00")
+
+    await wait_for_role(events, "assistant")
+    assert speech.transcribe_calls == 1
 
     await stop(conv, run_task)
 

@@ -1,8 +1,26 @@
-"""OpenVoiceChat: a tiny async voice conversation engine."""
+"""OpenVoiceChat package. Submodules are imported lazily to keep startup cheap."""
 
-from .config import Config
-from .conversation import Conversation
-from .speech import Speech
-from .vad import VAD
+from importlib.metadata import PackageNotFoundError, version
 
-__all__ = ["VAD", "Config", "Conversation", "Speech"]
+try:
+    __version__ = version("openvoicechat")
+except PackageNotFoundError:  # running from a source checkout
+    __version__ = "0.4.0"
+
+__all__ = ["VAD", "Config", "Conversation", "__version__"]
+
+
+def __getattr__(name: str):
+    if name == "Config":
+        from .config import Config
+
+        return Config
+    if name == "Conversation":
+        from .conversation import Conversation
+
+        return Conversation
+    if name == "VAD":
+        from .vad import VAD
+
+        return VAD
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

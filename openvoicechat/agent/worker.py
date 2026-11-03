@@ -11,7 +11,7 @@ from daily import CallClient, Daily, EventHandler
 
 from openvoicechat.config import Config
 from openvoicechat.conversation import Conversation
-from openvoicechat.speech import Speech
+from openvoicechat.local_speech import LocalSpeech
 
 SAMPLE_RATE = 16000
 FRAME_SAMPLES = 512
@@ -32,7 +32,7 @@ class AgentEventHandler(EventHandler):
 async def main(meeting_url: str, prompt: str, conversation_id: str) -> None:
     loop = asyncio.get_running_loop()
     config = Config()
-    speech = Speech(config)
+    speech = LocalSpeech()
     log_dir = Path(config.data_dir) / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = open(  # noqa: ASYNC230, SIM115

@@ -3,9 +3,9 @@
 import os
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
-load_dotenv()
+load_dotenv(find_dotenv(usecwd=True))
 
 
 def _int(name: str, default: int) -> int:
@@ -24,21 +24,18 @@ def _float(name: str, default: float) -> float:
 
 @dataclass(frozen=True)
 class Config:
-    deepgram_api_key: str = os.getenv("DEEPGRAM_API_KEY", "")
-    deepgram_model: str = os.getenv("DEEPGRAM_MODEL", "nova-3")
-    deepgram_url: str = os.getenv("DEEPGRAM_URL", "https://api.deepgram.com/v1/listen")
-    elevenlabs_api_key: str = os.getenv("ELEVENLABS_API_KEY", "")
-    elevenlabs_voice_id: str = os.getenv("ELEVENLABS_VOICE_ID", "")
-    elevenlabs_model: str = os.getenv("ELEVENLABS_MODEL", "eleven_v4_turbo")
-    elevenlabs_url: str = os.getenv(
-        "ELEVENLABS_URL", "https://api.elevenlabs.io/v1/text-to-speech"
-    )
+    # LLM: any OpenAI-compatible endpoint. Local by preference, hosted by configuration.
     llm_api_key: str = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
     llm_base_url: str = os.getenv("LLM_BASE_URL", "")
     llm_model: str = os.getenv("LLM_MODEL", "gpt-4.1-nano")
+    llm_timeout_s: float = _float("LLM_TIMEOUT", 15.0)
+
+    # Daily agent server (optional extra).
     agent_api_token: str = os.getenv("AGENT_API_TOKEN", "")
     max_sessions: int = _int("MAX_SESSIONS", 5)
     data_dir: str = os.getenv("DATA_DIR", "data")
+
+    # Audio and turn taking.
     sample_rate: int = _int("SAMPLE_RATE", 16000)
     frame_samples: int = _int("FRAME_SAMPLES", 512)
     output_chunk_ms: int = _int("OUTPUT_CHUNK_MS", 100)
