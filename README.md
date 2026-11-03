@@ -90,6 +90,19 @@ yet; that measurement is part of the next milestone.
 Change the voice with `LOCAL_TTS_VOICE` (default `af_heart`, see the
 [Kokoro voice list](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)).
 
+### Startup warnings
+
+Startup prints one ONNX Runtime CUDA memcpy notice and three torch deprecation
+warnings from Kokoro. They are expected and do not affect output:
+
+- Kokoro runs in `eval()` mode and its dropout calls pass `training=False`.
+- The dropout warning is PyTorch noting an unused `dropout` argument on a
+  single-layer LSTM, where dropout is ignored by definition.
+- The other two are genuine deprecations inside Kokoro's model code; they will
+  disappear when Kokoro updates.
+
+They print once per process. The library does not hide them.
+
 ## LLM
 
 The LLM is any OpenAI-compatible API. The default is OpenAI; set `LLM_BASE_URL`
