@@ -29,7 +29,11 @@ class LocalSpeech:
 
         self._on_cuda = torch.cuda.is_available()
         available = onnxruntime.get_available_providers()
-        stt_device = "CUDA" if "CUDAExecutionProvider" in available else "CPU"
+        stt_device = (
+            "CUDA"
+            if self._on_cuda and "CUDAExecutionProvider" in available
+            else "CPU"
+        )
         providers = (
             ["CUDAExecutionProvider", "CPUExecutionProvider"]
             if stt_device == "CUDA"

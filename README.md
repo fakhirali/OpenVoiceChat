@@ -67,10 +67,11 @@ python main_local.py --verbose
 ```
 
 `main.py --local` is equivalent. The first run downloads Parakeet (~2 GB) and
-Kokoro-82M (~330 MB). Kokoro runs on the GPU when available. Parakeet uses ONNX
-Runtime's CUDA provider when `onnxruntime-gpu` is installed, and otherwise falls
-back to CPU. Default voice is `af_heart`; set `LOCAL_TTS_VOICE` to another
-[Kokoro voice](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)
+Kokoro-82M (~330 MB). On Linux x86_64 and Windows AMD64, the core dependency is
+`onnxruntime-gpu`, so Parakeet uses CUDA when available and falls back to CPU
+otherwise. macOS and non-x86 Linux use the CPU `onnxruntime` build. Kokoro uses
+CUDA when available. Default voice is `af_heart`; set `LOCAL_TTS_VOICE` to
+another [Kokoro voice](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)
 to change it.
 
 Parakeet TDT 0.6B v3 runs through `onnx-asr` (ONNX Runtime). Kokoro uses
@@ -79,29 +80,9 @@ package, so no system package is required. The LLM still uses the
 OpenAI-compatible endpoint configured in `.env`, so `LLM_API_KEY` is required;
 only STT and TTS are local.
 
-### GPU Parakeet (optional)
-
-The default `onnxruntime` dependency is the CPU build. To run Parakeet on an
-NVIDIA GPU, replace it with `onnxruntime-gpu` in the same environment:
-
-```bash
-uv pip uninstall onnxruntime
-uv pip install "onnxruntime-gpu"
-```
-
-Both packages install the same `onnxruntime` Python module, so the CPU package
-must be removed first. Choose the wheel that matches your CUDA major version:
-`onnxruntime-gpu` 1.27 and newer target CUDA 13.0 with cuDNN 9, while 1.26
-targets CUDA 12.8. PyTorch 2.4+ already ships the CUDA and cuDNN libraries, so
-no system CUDA toolkit is needed as long as `torch` is imported before the
-session is created (the local speech loop does this). Without PyTorch, install
-`onnxruntime-gpu[cuda,cudnn]` to pull the NVIDIA runtime libraries from PyPI.
-
-`LocalSpeech` checks `onnxruntime.get_available_providers()` and uses
-`CUDAExecutionProvider` when it is present, otherwise `CPUExecutionProvider`;
-there is nothing to configure. Reinstalling the project or running `uv sync`
-will restore the CPU `onnxruntime` dependency, so repeat the swap afterward.
-This is optional: the hosted path only uses CPU ONNX Runtime for Silero VAD.
+No environment swap is needed: `uv sync` and reinstall keep the GPU ONNX Runtime
+package on supported platforms. Silero VAD uses its CPU provider explicitly even
+when the GPU package is installed.
 
 ## Configure
 

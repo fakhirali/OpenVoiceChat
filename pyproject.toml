@@ -13,7 +13,11 @@ authors = [{ name = "Finity Alpha", email = "fakhir.ali@finityalpha.com" }]
 dependencies = [
     "httpx>=0.27",
     "numpy>=1.26",
-    "onnxruntime>=1.17",
+    "onnxruntime-gpu>=1.18; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "onnxruntime-gpu>=1.18; platform_system == 'Windows' and platform_machine == 'AMD64'",
+    "onnxruntime>=1.18; platform_system == 'Darwin'",
+    "onnxruntime>=1.18; platform_system == 'Linux' and platform_machine != 'x86_64'",
+    "onnxruntime>=1.18; platform_system == 'Windows' and platform_machine != 'AMD64'",
     "openai>=1.40",
     "pysbd>=0.3.4",
     "python-dotenv>=1.0",
