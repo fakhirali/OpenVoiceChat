@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import platform
 from dataclasses import asdict, dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -92,12 +91,13 @@ def _silero() -> Check:
 
 
 def _llm() -> Check:
-    key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
-    if not key:
+    from .config import Config
+
+    config = Config()
+    if not config.llm_api_key:
         return Check("llm", "fail", "set LLM_API_KEY (any value works for local servers)")
-    base = os.getenv("LLM_BASE_URL") or "https://api.openai.com/v1"
-    model = os.getenv("LLM_MODEL", "gpt-4.1-nano")
-    return Check("llm", "ok", f"{model} @ {base}")
+    base = config.llm_base_url or "https://api.openai.com/v1"
+    return Check("llm", "ok", f"{config.llm_model} @ {base}")
 
 
 def collect_checks() -> list[Check]:

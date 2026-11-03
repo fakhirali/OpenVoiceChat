@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 
 import numpy as np
 import soxr
@@ -21,7 +20,7 @@ _ONNX_STT_MODEL = "nemo-parakeet-tdt-0.6b-v3"
 class LocalSpeech:
     """Load Parakeet and Kokoro once, then use them from the local loop."""
 
-    def __init__(self) -> None:
+    def __init__(self, voice: str = DEFAULT_VOICE) -> None:
         import onnx_asr
         import onnxruntime
         import torch
@@ -48,7 +47,7 @@ class LocalSpeech:
             repo_id=TTS_MODEL,
             device="cuda" if self._on_cuda else "cpu",
         )
-        self._voice = os.getenv("LOCAL_TTS_VOICE", DEFAULT_VOICE)
+        self._voice = voice
 
     async def transcribe(self, pcm16: bytes) -> str:
         if not pcm16:

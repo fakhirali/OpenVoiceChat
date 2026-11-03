@@ -14,8 +14,8 @@ A small library for embedding an interruptible voice agent in a Python process:
 - **STT:** NVIDIA Parakeet TDT 0.6B v3 via `onnx-asr` (ONNX Runtime)
 - **TTS:** Kokoro-82M
 - **VAD / endpointing:** Silero VAD v5
-- **LLM:** any OpenAI-compatible API; `LLM_BASE_URL` points at OpenAI, Ollama,
-  llama.cpp, vLLM, or your own gateway
+- **LLM:** any OpenAI-compatible API; `Config(llm_base_url=..., llm_model=...)`
+  points at OpenAI, Ollama, llama.cpp, vLLM, or your own gateway
 
 It is not a platform, a model zoo, or a cloud speech wrapper. There is no
 dashboard, auth service, database, or provider registry.
@@ -87,7 +87,7 @@ Measured on one RTX 3080 Ti (12 GB), Python 3.12:
 These are single-session numbers. Concurrent-call benchmarks are not published
 yet; that measurement is part of the next milestone.
 
-Change the voice with `LOCAL_TTS_VOICE` (default `af_heart`, see the
+Pick a voice with `--voice` (default `af_heart`, see the
 [Kokoro voice list](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)).
 
 ### Startup warnings
@@ -103,31 +103,48 @@ warnings from Kokoro. They are expected and do not affect output:
 
 They print once per process. The library does not hide them.
 
-## LLM
+## Configuration
 
-The LLM is any OpenAI-compatible API. The default is OpenAI; set `LLM_BASE_URL`
-to point somewhere else. The voice stack stays local either way.
+`.env` holds secrets only:
 
 ```dotenv
 LLM_API_KEY=...
-LLM_MODEL=gpt-4.1-nano
-# LLM_BASE_URL=        # empty means https://api.openai.com/v1
+AGENT_API_TOKEN=...
+DAILY_API_KEY=...
 ```
 
-Local servers use the same shape:
+Everything else is a field on `Config` in `openvoicechat/config.py`:
+
+```python
+from openvoicechat import Config
+
+config = Config(
+    llm_model="gpt-4.1-nano",
+    llm_base_url="",           # empty means https://api.openai.com/v1
+    endpoint_silence_ms=400,
+    vad_threshold=0.6,
+)
+```
+
+`main.py` exposes `--model`, `--base-url`, and `--voice`; edit `Config` for
+everything else. Nothing besides secrets is read from the environment.
+
+## LLM
+
+The default is OpenAI with `gpt-4.1-nano`. Point it elsewhere with flags:
 
 ```bash
-ollama pull qwen3:4b
+python main.py --base-url http://localhost:11434/v1 --model qwen3:4b
 ```
 
-```dotenv
-LLM_BASE_URL=http://localhost:11434/v1
-LLM_MODEL=qwen3:4b
-LLM_API_KEY=local
+or in code:
+
+```python
+config = Config(llm_base_url="http://localhost:8000/v1", llm_model="my-model")
 ```
 
 llama.cpp (`http://localhost:8080/v1`) and vLLM (`http://localhost:8000/v1`)
-work the same way. `LLM_TIMEOUT` defaults to 15 seconds with one retry, so a
+work the same way. `llm_timeout_s` defaults to 15 seconds with one retry, so a
 stalled model cannot freeze a turn.
 
 ## Check your machine
@@ -152,18 +169,20 @@ schema for agents:
 
 ## Turn taking
 
-| Variable | Default | Effect |
+| Config field | Default | Effect |
 |---|---:|---|
-| `ENDPOINT_SILENCE_MS` | `600` | Silence before an utterance is sent to STT |
-| `PRE_ROLL_MS` | `300` | Audio kept before speech onset |
-| `VAD_THRESHOLD` | `0.6` | Silero speech probability threshold |
-| `MIN_SPEECH_MS` | `250` | Utterances shorter than this are dropped |
-| `MAX_UTTERANCE_MS` | `30000` | Rolling window for one uninterrupted utterance |
-| `OUTPUT_CHUNK_MS` | `100` | TTS chunk size written to the transport |
+| `endpoint_silence_ms` | `600` | Silence before an utterance is sent to STT |
+| `pre_roll_ms` | `300` | Audio kept before speech onset |
+| `vad_threshold` | `0.6` | Silero speech probability threshold |
+| `min_speech_ms` | `250` | Utterances shorter than this are dropped |
+| `max_utterance_ms` | `30000` | Rolling window for one uninterrupted utterance |
+| `output_chunk_ms` | `100` | TTS chunk size written to the transport |
 
-`MAX_UTTERANCE_MS` does not cut a speaker off mid-sentence. Past the cap the
+`max_utterance_ms` does not cut a speaker off mid-sentence. Past the cap the
 engine keeps the most recent window and waits for silence, so a long monologue
 costs bounded memory instead of cancelling its own turn.
+
+Override any of these in code, for example `Config(endpoint_silence_ms=400)`.
 
 ## Daily (optional)
 
