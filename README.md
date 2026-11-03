@@ -48,10 +48,39 @@ and history. Transports only move PCM16 in and out.
 Python 3.11+ is required.
 
 ```bash
-pip install -e ".[local,models]"
-cp .env.example .env
-python main.py --verbose
+pip install "openvoicechat[local,models]"
+cp .env.example .env      # then set LLM_API_KEY
 ```
+
+```python
+# voice.py — talk through the microphone and speakers
+import asyncio
+
+from openvoicechat import Config, Conversation
+from openvoicechat.audio import run_local
+from openvoicechat.local_speech import LocalSpeech
+
+
+async def main() -> None:
+    speech = LocalSpeech()
+    conversation = Conversation(
+        speech,
+        config=Config(),
+        on_turn=lambda role, text: print(f"{role.upper()}: {text}"),
+    )
+    await run_local(conversation)
+
+
+asyncio.run(main())
+```
+
+```bash
+python voice.py
+```
+
+From a checkout, `python main.py --verbose` runs the same loop and exposes
+`--model`, `--base-url`, `--voice`, and device flags. The `ovc` CLI currently
+provides `ovc doctor`; `init`, `run`, `bench`, and `serve` land next.
 
 The first run downloads Parakeet (~2 GB), Kokoro-82M (~330 MB), and Silero VAD
 (~2 MB). `--verbose` prints speech start/end, endpointing, STT, LLM first-token,

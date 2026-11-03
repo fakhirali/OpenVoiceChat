@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "openvoicechat"
 version = "0.4.0"
-description = "A small local voice runtime for Python: Parakeet STT, Kokoro TTS, Silero VAD, many calls on one GPU."
+description = "A small local voice runtime for Python: Parakeet STT, Kokoro TTS, and Silero VAD."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
