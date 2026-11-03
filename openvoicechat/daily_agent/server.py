@@ -86,7 +86,7 @@ async def join_meeting(body: JoinMeetingRequest, _: None = Depends(require_token
         worker = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
-            "openvoicechat.agent.worker",
+            "openvoicechat.daily_agent.worker",
             body.meeting_url,
             body.prompt,
             conversation_id,
@@ -97,7 +97,7 @@ async def join_meeting(body: JoinMeetingRequest, _: None = Depends(require_token
         recorder = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
-            "openvoicechat.agent.recorder",
+            "openvoicechat.daily_agent.recorder",
             body.meeting_url,
             "--output",
             str(recording_path),
@@ -193,4 +193,4 @@ async def _stop_process(process) -> None:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("openvoicechat.agent.server:app", host="0.0.0.0", port=8001)
+    uvicorn.run("openvoicechat.daily_agent.server:app", host="0.0.0.0", port=8001)

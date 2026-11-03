@@ -65,7 +65,7 @@ def _start_server(port: int) -> tuple[subprocess.Popen, object, Path]:
             sys.executable,
             "-m",
             "uvicorn",
-            "openvoicechat.agent.server:app",
+            "openvoicechat.daily_agent.server:app",
             "--host",
             "127.0.0.1",
             "--port",

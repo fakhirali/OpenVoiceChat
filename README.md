@@ -154,7 +154,7 @@ costs bounded memory instead of cancelling its own turn.
 
 ## Daily (optional)
 
-The Daily transport lives in `openvoicechat/agent/`. It is a thin call client,
+The Daily transport lives in `openvoicechat/daily_agent/`. It is a thin call client,
 but it still starts **one process per meeting**, so each meeting loads its own
 models. Moving it onto a shared runtime is the next milestone.
 
@@ -169,7 +169,7 @@ transcript, and cleans up on `Ctrl-C`.
 Server:
 
 ```bash
-uvicorn openvoicechat.agent.server:app --host 0.0.0.0 --port 8001
+uvicorn openvoicechat.daily_agent.server:app --host 0.0.0.0 --port 8001
 ```
 
 `GET /health` is public; all other routes require
