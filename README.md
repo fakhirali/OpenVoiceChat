@@ -14,7 +14,8 @@ A small library for embedding an interruptible voice agent in a Python process:
 - **STT:** NVIDIA Parakeet TDT 0.6B v3 via `onnx-asr` (ONNX Runtime)
 - **TTS:** Kokoro-82M
 - **VAD / endpointing:** Silero VAD v5
-- **LLM:** any OpenAI-compatible endpoint — local by preference, hosted by configuration
+- **LLM:** any OpenAI-compatible API; `LLM_BASE_URL` points at OpenAI, Ollama,
+  llama.cpp, vLLM, or your own gateway
 
 It is not a platform, a model zoo, or a cloud speech wrapper. There is no
 dashboard, auth service, database, or provider registry.
@@ -91,7 +92,16 @@ Change the voice with `LOCAL_TTS_VOICE` (default `af_heart`, see the
 
 ## LLM
 
-Any OpenAI-compatible server works. The example config targets a local Ollama:
+The LLM is any OpenAI-compatible API. The default is OpenAI; set `LLM_BASE_URL`
+to point somewhere else. The voice stack stays local either way.
+
+```dotenv
+LLM_API_KEY=...
+LLM_MODEL=gpt-4.1-nano
+# LLM_BASE_URL=        # empty means https://api.openai.com/v1
+```
+
+Local servers use the same shape:
 
 ```bash
 ollama pull qwen3:4b
@@ -103,9 +113,9 @@ LLM_MODEL=qwen3:4b
 LLM_API_KEY=local
 ```
 
-For a hosted endpoint, point `LLM_BASE_URL` and `LLM_MODEL` at it and use a real
-key. The voice stack stays local either way. `LLM_TIMEOUT` defaults to 15 seconds
-with one retry, so a stalled model cannot freeze a turn.
+llama.cpp (`http://localhost:8080/v1`) and vLLM (`http://localhost:8000/v1`)
+work the same way. `LLM_TIMEOUT` defaults to 15 seconds with one retry, so a
+stalled model cannot freeze a turn.
 
 ## Check your machine
 

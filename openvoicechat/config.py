@@ -24,7 +24,7 @@ def _float(name: str, default: float) -> float:
 
 @dataclass(frozen=True)
 class Config:
-    # LLM: any OpenAI-compatible endpoint. Local by preference, hosted by configuration.
+    # LLM: any OpenAI-compatible API. LLM_BASE_URL selects the endpoint.
     llm_api_key: str = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
     llm_base_url: str = os.getenv("LLM_BASE_URL", "")
     llm_model: str = os.getenv("LLM_MODEL", "gpt-4.1-nano")
