@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import warnings
 
 import numpy as np
 import soxr
@@ -25,7 +26,10 @@ class LocalSpeech:
         import onnx_asr
         import onnxruntime
         import torch
-        from kokoro import KPipeline
+
+        # ORT logs a CUDA memcpy notice at warning level; it is not actionable
+        # here because the pipeline does not use CUDA graphs. Keep errors only.
+        onnxruntime.set_default_logger_severity(3)
 
         self._on_cuda = torch.cuda.is_available()
         available = onnxruntime.get_available_providers()
@@ -43,11 +47,22 @@ class LocalSpeech:
         self._stt = onnx_asr.load_model(_ONNX_STT_MODEL, providers=providers)
         tts_device = "CUDA" if self._on_cuda else "CPU"
         print(f"Loading Kokoro ({TTS_MODEL})... {tts_device}", flush=True)
-        self._tts = KPipeline(
-            lang_code="a",
-            repo_id=TTS_MODEL,
-            device="cuda" if self._on_cuda else "cpu",
-        )
+        with warnings.catch_warnings():
+            # Kokoro's model code trips three torch deprecation warnings that we
+            # cannot fix from here. Keep the rest of the warning stream intact.
+            warnings.simplefilter("ignore", category=FutureWarning)
+            warnings.filterwarnings(
+                "ignore",
+                message=r".*dropout option adds dropout.*",
+                category=UserWarning,
+            )
+            from kokoro import KPipeline
+
+            self._tts = KPipeline(
+                lang_code="a",
+                repo_id=TTS_MODEL,
+                device="cuda" if self._on_cuda else "cpu",
+            )
         self._voice = os.getenv("LOCAL_TTS_VOICE", DEFAULT_VOICE)
 
     async def transcribe(self, pcm16: bytes) -> str:
