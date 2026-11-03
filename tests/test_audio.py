@@ -1,11 +1,11 @@
-"""Tests for the local audio loop helpers."""
+"""Tests for the local audio helpers."""
 
 import numpy as np
 import pytest
 
 pytest.importorskip("soxr")
 
-from main import SPEECH_RATE, _Pcm16Resampler
+from openvoicechat.audio import SPEECH_RATE, Pcm16Resampler
 
 
 def test_streaming_resampler_has_no_large_boundary_jumps():
@@ -13,7 +13,7 @@ def test_streaming_resampler_has_no_large_boundary_jumps():
     time = np.arange(rate) / rate
     audio = (np.sin(2 * np.pi * 440 * time) * 0.5 * 32767).astype(np.int16)
     frame = int(rate * 0.032)
-    resampler = _Pcm16Resampler(rate, SPEECH_RATE)
+    resampler = Pcm16Resampler(rate, SPEECH_RATE)
 
     output = b"".join(
         resampler.process(audio[start : start + frame].tobytes())
