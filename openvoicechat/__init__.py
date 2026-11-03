@@ -5,7 +5,7 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("openvoicechat")
 except PackageNotFoundError:  # running from a source checkout
-    __version__ = "0.4.0"
+    __version__ = "0.4.1"
 
 __all__ = ["VAD", "Config", "Conversation", "__version__"]
 

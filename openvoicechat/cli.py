@@ -18,7 +18,7 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("openvoicechat")
 except PackageNotFoundError:  # running from a source checkout
-    __version__ = "0.4.0"
+    __version__ = "0.4.1"
 
 SCHEMA_VERSION = 1
 _LABEL = {"ok": "PASS", "warn": "WARN", "missing": "MISSING", "fail": "FAIL"}
