@@ -60,7 +60,7 @@ On Linux you may need PortAudio: `sudo apt install libportaudio2`. Use
 timings. `Ctrl-C` stops it. Audio is resampled between the device rate and 16 kHz
 internally.
 
-## Local models (Parakeet + Qwen3-TTS)
+## Local models (Parakeet + Kokoro-82M)
 
 ```bash
 pip install -e ".[local,models]"
@@ -68,13 +68,16 @@ python main_local.py --verbose
 ```
 
 `main.py --local` is equivalent. The first run downloads Parakeet (~2 GB) and
-Qwen3-TTS (~2 GB). An RTX 3080 Ti 12 GB runs both comfortably; CPU works but is
-slower. Default voice is Aiden; set `LOCAL_TTS_VOICE` / `LOCAL_TTS_LANGUAGE` to change it.
+Kokoro-82M (~330 MB). Kokoro runs on the GPU when available; Parakeet runs
+through ONNX Runtime on CPU. Default voice is `af_heart`; set `LOCAL_TTS_VOICE`
+to another [Kokoro voice](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)
+to change it.
 
-Parakeet runs through `onnx-asr` because `qwen-tts` pins Transformers 4.57, which
-predates Parakeet TDT support; it is the same NVIDIA Parakeet TDT 0.6B v3
-checkpoint. The LLM still uses the OpenAI-compatible endpoint configured in
-`.env`, so `LLM_API_KEY` is required; only STT and TTS are local.
+Parakeet TDT 0.6B v3 runs through `onnx-asr` (ONNX Runtime). Kokoro uses
+`espeak-ng` for out-of-dictionary words via the bundled `espeakng-loader`
+package, so no system package is required. The LLM still uses the
+OpenAI-compatible endpoint configured in `.env`, so `LLM_API_KEY` is required;
+only STT and TTS are local.
 
 ## Configure
 

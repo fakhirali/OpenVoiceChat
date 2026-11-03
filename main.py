@@ -166,7 +166,7 @@ def main(local: bool = False) -> None:
         "--local",
         action="store_true",
         default=local,
-        help="use local Parakeet STT + Qwen3-TTS",
+        help="use local Parakeet STT + Kokoro TTS",
     )
     parser.add_argument(
         "--prompt",

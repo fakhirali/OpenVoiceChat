@@ -1,4 +1,4 @@
-"""Run the local loop with Parakeet STT and Qwen3-TTS."""
+"""Run the local loop with Parakeet STT and Kokoro TTS."""
 
 from main import main
 
