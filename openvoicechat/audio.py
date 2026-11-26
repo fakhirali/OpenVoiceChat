@@ -1,4 +1,8 @@
-"""Local microphone/speaker I/O and PCM16 resampling."""
+"""PCM16 plumbing: resampling, and the microphone/speaker pumps.
+
+These are the two ends of the pipeline. Each one owns one direction of the
+conversation's queues and nothing else; wiring them to streams is ``main.py``.
+"""
 
 from __future__ import annotations
 
@@ -36,7 +40,8 @@ class Pcm16Resampler:
         return self._stream.resample_chunk(data, last=False).tobytes()
 
 
-def _default_rate(sounddevice, kind: str, device=None) -> int:
+def default_rate(sounddevice, kind: str, device=None) -> int:
+    """The device's preferred sample rate, or 48 kHz when it will not say."""
     try:
         return round(
             float(sounddevice.query_devices(device, kind=kind)["default_samplerate"])
@@ -73,64 +78,3 @@ async def speaker(conversation: Conversation, stream, rate: int) -> None:
         if data:
             await asyncio.to_thread(stream.write, data)
             conversation.audio_written()
-
-
-async def run_local(
-    conversation: Conversation,
-    *,
-    input_device=None,
-    output_device=None,
-) -> None:
-    """Run one conversation against the default microphone and speaker."""
-    try:
-        import sounddevice as sd
-    except ImportError as exc:
-        raise ImportError(
-            'Missing audio dependencies. Install with: pip install -e ".[local]"'
-        ) from exc
-
-    input_rate = _default_rate(sd, "input", input_device)
-    output_rate = _default_rate(sd, "output", output_device)
-    print(
-        f"Audio: mic {input_rate} Hz, speaker {output_rate} Hz, speech {SPEECH_RATE} Hz",
-        flush=True,
-    )
-    with sd.RawInputStream(
-        samplerate=input_rate,
-        channels=1,
-        dtype="int16",
-        blocksize=0,
-        device=input_device,
-    ) as input_stream, sd.RawOutputStream(
-        samplerate=output_rate,
-        channels=1,
-        dtype="int16",
-        blocksize=0,
-        device=output_device,
-    ) as output_stream:
-        print("Listening. Ctrl-C to stop.", flush=True)
-        tasks = [
-            asyncio.create_task(conversation.run(), name="conversation"),
-            asyncio.create_task(
-                microphone(conversation, input_stream, input_rate), name="microphone"
-            ),
-            asyncio.create_task(
-                speaker(conversation, output_stream, output_rate), name="speaker"
-            ),
-        ]
-        try:
-            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                if task.cancelled():
-                    continue
-                if task.exception() is not None:
-                    print(
-                        f"{task.get_name()} failed: {task.exception()}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-        finally:
-            conversation.stop()
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)

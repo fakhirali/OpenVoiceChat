@@ -1,4 +1,8 @@
-"""The async listen -> transcribe -> LLM -> speak pipeline."""
+"""The listen -> transcribe -> LLM -> speak loop, in one file. Read it in order:
+:meth:`Conversation.run` is the call, :meth:`Conversation.utterances` is the
+endpointing state machine, :meth:`Conversation.respond` is one turn, and
+:class:`Speaker` is the one background task (TTS overlapping the LLM stream).
+"""
 
 import asyncio
 import contextlib
@@ -7,6 +11,7 @@ import math
 import time
 from collections import deque
 from dataclasses import dataclass
+from typing import Self
 
 import pysbd
 from openai import AsyncOpenAI
@@ -19,12 +24,9 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class TurnLatency:
-    """Per-turn timings in milliseconds, measured from the last user speech frame.
-
-    ``voice_to_voice_ms`` is the number that matters: it ends when the first
-    audio chunk is queued for the transport. Call :meth:`Conversation.audio_written`
-    from a transport to also log when that chunk actually reached the device.
-    """
+    """Per-turn timings in ms, from the last user speech frame. ``voice_to_voice_ms``
+    ends when the first audio chunk is queued; :meth:`Conversation.audio_written`
+    reports when a transport actually wrote it."""
 
     voice_to_voice_ms: float | None
     endpoint_ms: float
@@ -37,7 +39,9 @@ class TurnLatency:
 
 
 class Conversation:
-    """Owns one voice conversation over input/output PCM16 queues."""
+    """One voice conversation over input/output PCM16 queues. Put 16 kHz mono
+    frames into ``input``, read reply audio from ``output``; that is all a
+    transport has to do (see ``main.py``)."""
 
     def __init__(
         self,
@@ -47,7 +51,6 @@ class Conversation:
         config: Config | None = None,
         client: AsyncOpenAI | None = None,
         on_turn=None,
-        on_latency=None,
         on_event=None,
         vad=None,
         verbose: bool = False,
@@ -56,11 +59,10 @@ class Conversation:
         self.config = config or Config()
         self.system_prompt = system_prompt
         self.on_turn = on_turn
-        self.on_latency = on_latency
         self.on_event = on_event
         self.verbose = verbose
         self.last_latency: TurnLatency | None = None
-        self._speech_end_at = 0.0
+        self._last_speech_at = 0.0
         self._first_audio_ref: float | None = None
         self._owns_client = client is None
         if client is None:
@@ -78,155 +80,31 @@ class Conversation:
         self.input: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=200)
         self.output: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
         self.agent_speaking = False
-        self.messages = (
-            [{"role": "system", "content": system_prompt}] if system_prompt else []
-        )
+        self.messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
         self._frame_ms = 1000 * self.config.frame_samples / self.config.sample_rate
-        self._chunk_bytes = (
-            int(self.config.sample_rate * self.config.output_chunk_ms / 1000) * 2
-        )
+        self._chunk_bytes = int(self.config.sample_rate * self.config.output_chunk_ms / 1000) * 2
         self._stop = asyncio.Event()
         self._turn_task: asyncio.Task | None = None
 
+    # -- the call ---------------------------------------------------------
+
     async def run(self) -> None:
+        """Listen for utterances and answer each one, until ``stop()``."""
         self._event(
             "call_start",
             sample_rate=self.config.sample_rate,
             endpoint_silence_ms=self.config.endpoint_silence_ms,
         )
-        pre_roll: deque[bytes] = deque(
-            maxlen=math.ceil(self.config.pre_roll_ms / self._frame_ms)
-        )
-        onset: list[bytes] = []
-        utterance: deque[bytes] = deque()
-        utterance_frames = 0
-        voiced_run = 0
-        in_speech = False
-        capped = False
-        speech_ms = silence_ms = 0.0
-        endpoint_ms = self.config.endpoint_silence_ms
-        min_speech_ms = self.config.min_speech_ms
-        max_utterance_ms = self.config.max_utterance_ms
-
-        def reset() -> None:
-            nonlocal in_speech, voiced_run, capped, speech_ms, silence_ms, utterance_frames
-            in_speech = False
-            voiced_run = 0
-            capped = False
-            speech_ms = silence_ms = 0.0
-            utterance_frames = 0
-            utterance.clear()
-            onset.clear()
-            pre_roll.clear()
-            self.vad.reset()
-
         try:
-            while not self._stop.is_set():
-                frame = await self.input.get()
-                if frame is None or self._stop.is_set():
-                    break
-                if not frame:
-                    continue
-
-                if (
-                    self._turn_task is not None
-                    and self._turn_task.done()
-                    and self.output.empty()
-                ):
-                    self._turn_task = None
-                    self.agent_speaking = False
-
-                voiced = bool(self.vad(frame))
-                if voiced:
-                    self._speech_end_at = time.monotonic()
-
-                if (
-                    voiced
-                    and not in_speech
-                    and (self._turn_task is not None or self.agent_speaking)
-                ):
-                    await self._interrupt()
-
-                if not in_speech:
-                    if voiced:
-                        voiced_run += 1
-                        onset.append(frame)
-                        if voiced_run >= 2:
-                            in_speech = True
-                            speech_ms = voiced_run * self._frame_ms
-                            pre_roll_ms = len(pre_roll) * self._frame_ms
-                            utterance.extend(pre_roll)
-                            utterance.extend(onset)
-                            utterance_frames = len(pre_roll) + len(onset)
-                            pre_roll.clear()
-                            onset.clear()
-                            self._log(
-                                f"speech start | pre-roll={pre_roll_ms:.0f}ms"
-                            )
-                            self._event(
-                                "speech_start", pre_roll_ms=round(pre_roll_ms, 1)
-                            )
-                    else:
-                        voiced_run = 0
-                        onset.clear()
-                        if pre_roll.maxlen:
-                            pre_roll.append(frame)
-                    continue
-
-                utterance.append(frame)
-                utterance_frames += 1
-                utterance_ms = utterance_frames * self._frame_ms
-
-                if voiced:
-                    speech_ms += self._frame_ms
-                    silence_ms = 0.0
-                    if utterance_ms >= max_utterance_ms:
-                        # Still talking past the cap: keep the most recent window and
-                        # wait for silence. Ending the turn mid-speech makes the next
-                        # voiced frame look like barge-in and cancels it.
-                        while utterance_frames > 1 and utterance_ms > max_utterance_ms:
-                            utterance.popleft()
-                            utterance_frames -= 1
-                            utterance_ms = utterance_frames * self._frame_ms
-                        if not capped:
-                            capped = True
-                            self._log(
-                                f"utterance capped | keeping last {utterance_ms:.0f}ms"
-                            )
-                    continue
-
-                silence_ms += self._frame_ms
-                if silence_ms < endpoint_ms and utterance_ms < max_utterance_ms:
-                    continue
-
-                reason = "max-utterance" if utterance_ms >= max_utterance_ms else "silence"
-                self._log(
-                    f"endpoint ({reason}) | silence={silence_ms:.0f}ms "
-                    f"utterance={utterance_ms:.0f}ms speech={speech_ms:.0f}ms"
+            async for utterance, speech_end_at in self.utterances():
+                self._turn_task = asyncio.create_task(
+                    self.respond(utterance, speech_end_at), name="respond"
                 )
-                if speech_ms >= min_speech_ms and utterance:
-                    self._event(
-                        "endpoint",
-                        reason=reason,
-                        silence_ms=round(silence_ms, 1),
-                        speech_ms=round(speech_ms, 1),
-                        utterance_ms=round(utterance_ms, 1),
-                    )
-                    self._turn_task = asyncio.create_task(
-                        self._turn(b"".join(utterance), self._speech_end_at)
-                    )
-                else:
-                    self._event("dropped", speech_ms=round(speech_ms, 1))
-                    self._log(f"drop short utterance | speech={speech_ms:.0f}ms")
-                reset()
-                if pre_roll.maxlen:
-                    pre_roll.append(frame)
         finally:
             self._stop.set()
             task, self._turn_task = self._turn_task, None
             if task is not None:
-                if not task.done():
-                    task.cancel()
+                task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
             self._event("call_end")
@@ -237,22 +115,119 @@ class Conversation:
                 with contextlib.suppress(Exception):
                     await self.client.close()
 
-    def stop(self) -> None:
-        self._stop.set()
-        if self._turn_task is not None and not self._turn_task.done():
-            self._turn_task.cancel()
-        self._first_audio_ref = None
-        _drain(self.output)
-        with contextlib.suppress(asyncio.QueueFull):
-            self.input.put_nowait(None)
+    async def utterances(self):
+        """Yield ``(pcm16, last_speech_at)`` once per finished user utterance.
 
-    async def _turn(self, pcm: bytes, speech_end_at: float) -> None:
-        spoken: list[str] = []
-        sentences: asyncio.Queue[str | None] = asyncio.Queue(maxsize=16)
-        tts_task: asyncio.Task | None = None
-        response = ""
-        text = ""
-        completed = False
+        Endpointing only: two voiced frames open an utterance (one can be a
+        click), ``pre_roll_ms`` is kept ahead of it, barge-in cuts the agent
+        off, silence or the ``max_utterance_ms`` cap closes it, and anything
+        shorter than ``min_speech_ms`` is reported as dropped.
+        """
+        config = self.config
+        frame_ms = self._frame_ms
+        pre_roll: deque[bytes] = deque(maxlen=math.ceil(config.pre_roll_ms / frame_ms))
+        onset: list[bytes] = []
+        utterance: deque[bytes] = deque()
+        voiced_run = 0
+        in_speech = False
+        capped = False
+        speech_ms = silence_ms = 0.0
+
+        while not self._stop.is_set():
+            frame = await self.input.get()
+            if frame is None or self._stop.is_set():
+                return
+            if not frame:
+                continue
+
+            # A turn whose audio has played out is no longer interruptible.
+            if self._turn_task and self._turn_task.done() and self.output.empty():
+                self._turn_task = None
+                self.agent_speaking = False
+
+            voiced = bool(self.vad(frame))
+            if voiced:
+                self._last_speech_at = time.monotonic()
+
+            if voiced and not in_speech and (self._turn_task or self.agent_speaking):
+                await self.interrupt()
+
+            if not in_speech:
+                if not voiced:
+                    voiced_run = 0
+                    onset.clear()
+                    if pre_roll.maxlen:
+                        pre_roll.append(frame)
+                    continue
+                voiced_run += 1
+                onset.append(frame)
+                if voiced_run < 2:
+                    continue
+                in_speech = True
+                speech_ms = voiced_run * frame_ms
+                pre_roll_ms = len(pre_roll) * frame_ms
+                utterance.extend(pre_roll)
+                utterance.extend(onset)
+                pre_roll.clear()
+                onset.clear()
+                self._log(f"speech start | pre-roll={pre_roll_ms:.0f}ms")
+                self._event("speech_start", pre_roll_ms=round(pre_roll_ms, 1))
+                continue
+
+            utterance.append(frame)
+            utterance_ms = len(utterance) * frame_ms
+
+            if voiced:
+                speech_ms += frame_ms
+                silence_ms = 0.0
+                if utterance_ms >= config.max_utterance_ms:
+                    # Still talking past the cap: keep the most recent window and
+                    # wait for silence. Ending the turn mid-speech makes the next
+                    # voiced frame look like barge-in and cancels it.
+                    while len(utterance) > 1 and utterance_ms > config.max_utterance_ms:
+                        utterance.popleft()
+                        utterance_ms = len(utterance) * frame_ms
+                    if not capped:
+                        capped = True
+                        self._log(f"utterance capped | keeping last {utterance_ms:.0f}ms")
+                continue
+
+            silence_ms += frame_ms
+            if silence_ms < config.endpoint_silence_ms and utterance_ms < config.max_utterance_ms:
+                continue
+
+            reason = "max-utterance" if utterance_ms >= config.max_utterance_ms else "silence"
+            self._log(
+                f"endpoint ({reason}) | silence={silence_ms:.0f}ms "
+                f"utterance={utterance_ms:.0f}ms speech={speech_ms:.0f}ms"
+            )
+            if speech_ms >= config.min_speech_ms and utterance:
+                self._event(
+                    "endpoint",
+                    reason=reason,
+                    silence_ms=round(silence_ms, 1),
+                    speech_ms=round(speech_ms, 1),
+                    utterance_ms=round(utterance_ms, 1),
+                )
+                yield b"".join(utterance), self._last_speech_at
+            else:
+                self._event("dropped", speech_ms=round(speech_ms, 1))
+                self._log(f"drop short utterance | speech={speech_ms:.0f}ms")
+
+            # Reset for the next utterance; this frame is its first pre-roll.
+            in_speech = False
+            voiced_run = 0
+            capped = False
+            speech_ms = silence_ms = 0.0
+            utterance.clear()
+            onset.clear()
+            pre_roll.clear()
+            self.vad.reset()
+            if pre_roll.maxlen:
+                pre_roll.append(frame)
+
+    async def respond(self, utterance: bytes, speech_end_at: float) -> None:
+        """One turn: transcribe the utterance, stream the reply, speak it."""
         started = time.monotonic()
         metrics: dict[str, float | None] = {
             "endpoint_ms": 1000 * (started - speech_end_at),
@@ -262,149 +237,91 @@ class Conversation:
             "tts_first_ms": None,
             "voice_to_voice_ms": None,
         }
+        text = ""
+        response = ""
+        speaker: Speaker | None = None
+        completed = False
         self._log(
-            f"turn start | pcm={len(pcm) / 2 / self.config.sample_rate * 1000:.0f}ms"
+            f"turn start | pcm={len(utterance) / 2 / self.config.sample_rate * 1000:.0f}ms"
         )
-
-        async def feed_sentence(sentence: str) -> None:
-            if metrics["first_sentence_ms"] is None:
-                metrics["first_sentence_ms"] = 1000 * (
-                    time.monotonic() - speech_end_at
-                )
-            await self._feed(sentences, sentence, tts_task)
 
         try:
             stt_started = time.monotonic()
-            text = (await self.speech.transcribe(pcm)).strip()
+            text = (await self.speech.transcribe(utterance)).strip()
             metrics["stt_ms"] = 1000 * (time.monotonic() - stt_started)
             self._log(f"STT ({metrics['stt_ms']:.0f}ms): {text!r}")
             self._event("stt", ms=round(metrics["stt_ms"], 1), text=text)
             if not text:
                 return
+
             self.messages.append({"role": "user", "content": text})
             self._emit("user", text)
 
-            tts_task = asyncio.create_task(
-                self._speak(sentences, spoken, metrics, speech_end_at)
-            )
-            segmenter = pysbd.Segmenter(language="en", clean=False)
-            buffer = ""
-            llm_started = time.monotonic()
-            first_token = True
-            stream = await self.client.chat.completions.create(
-                model=self.config.llm_model,
-                messages=self.messages,
-                stream=True,
-            )
-            async for chunk in stream:
-                for choice in getattr(chunk, "choices", None) or []:
-                    token = getattr(getattr(choice, "delta", None), "content", None)
-                    if not token:
-                        continue
-                    if first_token:
-                        first_token = False
-                        metrics["llm_ttft_ms"] = 1000 * (
-                            time.monotonic() - llm_started
-                        )
-                        self._log(
-                            f"LLM first token ({metrics['llm_ttft_ms']:.0f}ms)"
-                        )
-                        self._event(
-                            "llm_first_token",
-                            ms=round(metrics["llm_ttft_ms"], 1),
-                        )
-                    response += token
-                    buffer += token
-                    if any(mark in buffer for mark in ".!?\n"):
-                        parts = segmenter.segment(buffer)
-                        if len(parts) > 1:
-                            for sentence in parts[:-1]:
-                                sentence = sentence.strip()
-                                if sentence:
-                                    await feed_sentence(sentence)
-                            buffer = parts[-1]
-
-            if buffer.strip():
-                await feed_sentence(buffer.strip())
-            await self._feed(sentences, None, tts_task)
-            await tts_task
+            splitter = Sentences()
+            async with Speaker(self, speech_end_at) as speaker:
+                stream = await self.client.chat.completions.create(
+                    model=self.config.llm_model,
+                    messages=self.messages,
+                    stream=True,
+                )
+                llm_started = time.monotonic()
+                async for chunk in stream:
+                    for choice in getattr(chunk, "choices", None) or []:
+                        token = getattr(getattr(choice, "delta", None), "content", None)
+                        if not token:
+                            continue
+                        if metrics["llm_ttft_ms"] is None:
+                            ms = 1000 * (time.monotonic() - llm_started)
+                            metrics["llm_ttft_ms"] = ms
+                            self._log(f"LLM first token ({ms:.0f}ms)")
+                            self._event("llm_first_token", ms=round(ms, 1))
+                        response += token
+                        for sentence in splitter.feed(token):
+                            await speaker.say(sentence)
+                for sentence in splitter.flush():
+                    await speaker.say(sentence)
 
             if response.strip():
                 self.messages.append({"role": "assistant", "content": response})
                 self._emit("assistant", response)
                 completed = True
         except asyncio.CancelledError:
-            self._log(f"turn cancelled | spoken_sentences={len(spoken)}")
-            partial = " ".join(spoken).strip()
-            if partial and not completed:
-                self.messages.append({"role": "assistant", "content": partial})
-                self._emit("assistant", partial)
+            self._log(f"turn cancelled | spoken_sentences={len(speaker.spoken) if speaker else 0}")
             raise
         except Exception as exc:
             self._log(f"turn error: {exc!r}")
             log.exception("conversation turn failed")
-            partial = " ".join(spoken).strip()
-            if partial and not completed:
-                self.messages.append({"role": "assistant", "content": partial})
-                self._emit("assistant", partial)
             self._emit("error", str(exc))
         finally:
+            # A cut-off turn keeps what the user already heard.
+            spoken = " ".join(speaker.spoken).strip() if speaker else ""
+            if spoken and not completed:
+                self.messages.append({"role": "assistant", "content": spoken})
+                self._emit("assistant", spoken)
             self._log(f"turn finished ({1000 * (time.monotonic() - started):.0f}ms)")
             self._trim_history()
-            if tts_task is not None:
-                if not tts_task.done():
-                    tts_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await tts_task
+            if speaker is not None:
+                metrics["first_sentence_ms"] = speaker.first_sentence_ms
+                metrics["tts_first_ms"] = speaker.first_synthesis_ms
+                metrics["voice_to_voice_ms"] = speaker.first_audio_ms
             self._record_latency(
-                metrics,
-                speech_end_at,
-                completed,
-                text,
-                response.strip() or " ".join(spoken).strip(),
+                metrics, speech_end_at, completed, text, response.strip() or spoken
             )
 
-    async def _speak(
-        self,
-        sentences: asyncio.Queue,
-        spoken: list[str],
-        metrics: dict[str, float | None],
-        speech_end_at: float,
-    ) -> None:
-        while True:
-            sentence = await sentences.get()
-            if sentence is None:
-                return
-            tts_started = time.monotonic()
-            audio = await self.speech.synthesize(sentence)
-            elapsed_ms = 1000 * (time.monotonic() - tts_started)
-            if metrics["tts_first_ms"] is None:
-                metrics["tts_first_ms"] = elapsed_ms
-            self._log(
-                f"TTS ({elapsed_ms:.0f}ms, {len(audio)} bytes): {sentence!r}"
-            )
-            self._event(
-                "tts",
-                ms=round(elapsed_ms, 1),
-                bytes=len(audio),
-                audio_ms=round(len(audio) / 2 / self.config.sample_rate * 1000, 1),
-                text=sentence,
-            )
-            if not audio:
-                continue
-            spoken.append(sentence)
-            self.agent_speaking = True
-            if metrics["voice_to_voice_ms"] is None:
-                metrics["voice_to_voice_ms"] = 1000 * (
-                    time.monotonic() - speech_end_at
-                )
-                self._first_audio_ref = speech_end_at
-                self._log(
-                    f"voice-to-voice ({metrics['voice_to_voice_ms']:.0f}ms) | "
-                    "last speech -> first audio queued"
-                )
-            for start in range(0, len(audio), self._chunk_bytes):
-                await self.output.put(audio[start : start + self._chunk_bytes])
+    # -- transport side ---------------------------------------------------
+
+    async def interrupt(self) -> None:
+        """Barge-in: cancel the in-flight turn and drop its queued audio."""
+        self._log(f"barge-in | cancelling turn, output_chunks={self.output.qsize()}")
+        self._event("barge_in")
+        task, self._turn_task = self._turn_task, None
+        self.agent_speaking = False
+        self._first_audio_ref = None
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        _drain(self.output)
 
     def audio_written(self) -> None:
         """Call when a transport writes its first output frame of a reply."""
@@ -412,10 +329,20 @@ class Conversation:
             return
         ref, self._first_audio_ref = self._first_audio_ref, None
         elapsed_ms = 1000 * (time.monotonic() - ref)
-        self._log(
-            f"first audio written ({elapsed_ms:.0f}ms after last speech)"
-        )
+        self._log(f"first audio written ({elapsed_ms:.0f}ms after last speech)")
         self._event("first_audio_written", ms=round(elapsed_ms, 1))
+
+    def stop(self) -> None:
+        """End the call: cancel the turn, drop queued audio, wake the loop."""
+        self._stop.set()
+        if self._turn_task is not None and not self._turn_task.done():
+            self._turn_task.cancel()
+        self._first_audio_ref = None
+        _drain(self.output)
+        with contextlib.suppress(asyncio.QueueFull):
+            self.input.put_nowait(None)
+
+    # -- bookkeeping ------------------------------------------------------
 
     def _record_latency(
         self,
@@ -450,42 +377,6 @@ class Conversation:
             tts_first_ms=latency.tts_first_ms,
             turn_ms=round(latency.turn_ms, 1),
         )
-        if self.on_latency is None:
-            return
-        try:
-            self.on_latency(latency)
-        except Exception:
-            log.exception("on_latency callback failed")
-
-    @staticmethod
-    async def _feed(queue: asyncio.Queue, item, tts_task: asyncio.Task) -> None:
-        put = asyncio.create_task(queue.put(item))
-        try:
-            done, _ = await asyncio.wait((put, tts_task), return_when=asyncio.FIRST_COMPLETED)
-        except asyncio.CancelledError:
-            put.cancel()
-            await asyncio.gather(put, return_exceptions=True)
-            raise
-        if put in done:
-            put.result()
-            return
-        put.cancel()
-        await asyncio.gather(put, return_exceptions=True)
-        tts_task.result()
-
-    async def _interrupt(self) -> None:
-        self._log(
-            f"barge-in | cancelling turn, output_chunks={self.output.qsize()}"
-        )
-        self._event("barge_in")
-        task, self._turn_task = self._turn_task, None
-        self.agent_speaking = False
-        self._first_audio_ref = None
-        if task is not None and not task.done():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-        _drain(self.output)
 
     def _log(self, message: str) -> None:
         if self.verbose:
@@ -512,6 +403,128 @@ class Conversation:
         offset = 1 if self.system_prompt else 0
         if len(self.messages) > offset + 20:
             self.messages = self.messages[:offset] + self.messages[-20:]
+
+
+class Speaker:
+    """Speaks one turn's sentences while the LLM keeps streaming.
+
+    The only concurrency in the pipeline: the turn hands finished sentences to
+    :meth:`say`, this task synthesizes each one and queues its PCM16 on
+    ``conversation.output``, so the first sentence is heard while the model is
+    still writing the rest. ``say`` blocks only when synthesis falls
+    ``QUEUE_DEPTH`` sentences behind, and re-raises a synthesis failure so the
+    turn stops instead of feeding a dead speaker.
+    """
+
+    QUEUE_DEPTH = 16
+
+    def __init__(self, conversation: Conversation, speech_end_at: float):
+        self._conversation = conversation
+        self._speech_end_at = speech_end_at
+        self._sentences: asyncio.Queue[str | None] = asyncio.Queue(self.QUEUE_DEPTH)
+        self._task: asyncio.Task | None = None
+        self.spoken: list[str] = []
+        self.first_sentence_ms: float | None = None
+        self.first_synthesis_ms: float | None = None
+        self.first_audio_ms: float | None = None
+
+    def _since_speech_ms(self) -> float:
+        return 1000 * (time.monotonic() - self._speech_end_at)
+
+    async def __aenter__(self) -> Self:
+        self._task = asyncio.create_task(self._run(), name="speak")
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        if exc is None:
+            if self._task.done():
+                self._task.result()  # synthesis already failed; surface it
+            await self._sentences.put(None)  # no more sentences: speak what is queued
+            await self._task
+            return
+        self._task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await self._task
+
+    async def say(self, sentence: str) -> None:
+        """Queue one sentence; block only if the speaker is that far behind."""
+        if self._task.done():
+            self._task.result()
+        if self.first_sentence_ms is None:
+            self.first_sentence_ms = self._since_speech_ms()
+        try:
+            self._sentences.put_nowait(sentence)
+        except asyncio.QueueFull:
+            put = asyncio.create_task(self._sentences.put(sentence))
+            await asyncio.wait((put, self._task), return_when=asyncio.FIRST_COMPLETED)
+            if not put.done():
+                put.cancel()
+                await asyncio.gather(put, return_exceptions=True)
+                self._task.result()
+
+    async def _run(self) -> None:
+        conversation = self._conversation
+        chunk = conversation._chunk_bytes
+        rate = conversation.config.sample_rate
+        while True:
+            sentence = await self._sentences.get()
+            if sentence is None:
+                return
+            started = time.monotonic()
+            audio = await conversation.speech.synthesize(sentence)
+            elapsed_ms = 1000 * (time.monotonic() - started)
+            if self.first_synthesis_ms is None:
+                self.first_synthesis_ms = elapsed_ms
+            conversation._log(f"TTS ({elapsed_ms:.0f}ms, {len(audio)} bytes): {sentence!r}")
+            conversation._event(
+                "tts",
+                ms=round(elapsed_ms, 1),
+                bytes=len(audio),
+                audio_ms=round(len(audio) / 2 / rate * 1000, 1),
+                text=sentence,
+            )
+            if not audio:
+                continue
+            self.spoken.append(sentence)
+            conversation.agent_speaking = True
+            if self.first_audio_ms is None:
+                self.first_audio_ms = self._since_speech_ms()
+                conversation._first_audio_ref = self._speech_end_at
+                conversation._log(
+                    f"voice-to-voice ({self.first_audio_ms:.0f}ms) | "
+                    "last speech -> first audio queued"
+                )
+            for start in range(0, len(audio), chunk):
+                await conversation.output.put(audio[start : start + chunk])
+
+
+class Sentences:
+    """Turns a token stream into complete sentences as it arrives.
+
+    The LLM is quoted freely, so a period alone is not a boundary; pysbd
+    decides, and the text after the last boundary stays buffered until the next
+    token completes it (or :meth:`flush` ends the reply).
+    """
+
+    MARKS = ".!?\n"
+
+    def __init__(self) -> None:
+        self._segmenter = pysbd.Segmenter(language="en", clean=False)
+        self._buffer = ""
+
+    def feed(self, token: str) -> list[str]:
+        self._buffer += token
+        if not any(mark in token for mark in self.MARKS):
+            return []
+        parts = self._segmenter.segment(self._buffer)
+        if len(parts) < 2:
+            return []
+        self._buffer = parts[-1]
+        return [sentence for sentence in (part.strip() for part in parts[:-1]) if sentence]
+
+    def flush(self) -> list[str]:
+        pending, self._buffer = self._buffer.strip(), ""
+        return [pending] if pending else []
 
 
 def _drain(queue: asyncio.Queue) -> None:

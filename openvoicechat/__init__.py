@@ -1,4 +1,12 @@
-"""OpenVoiceChat package. Submodules are imported lazily to keep startup cheap."""
+"""OpenVoiceChat: the local voice runtime for Python.
+
+Nothing is re-exported here, so importing the package never loads numpy,
+onnxruntime, or torch. Import the piece you need:
+
+    from openvoicechat.config import Config
+    from openvoicechat.conversation import Conversation
+    from openvoicechat.local_speech import LocalSpeech
+"""
 
 from importlib.metadata import PackageNotFoundError, version
 
@@ -7,24 +15,4 @@ try:
 except PackageNotFoundError:  # running from a source checkout
     __version__ = "0.4.1"
 
-__all__ = ["VAD", "Config", "Conversation", "TurnLatency", "__version__"]
-
-
-def __getattr__(name: str):
-    if name == "Config":
-        from .config import Config
-
-        return Config
-    if name == "Conversation":
-        from .conversation import Conversation
-
-        return Conversation
-    if name == "TurnLatency":
-        from .conversation import TurnLatency
-
-        return TurnLatency
-    if name == "VAD":
-        from .vad import VAD
-
-        return VAD
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+__all__ = ["__version__"]

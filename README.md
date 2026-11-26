@@ -43,6 +43,20 @@ speaker ◄── resample to device rate ◄── Conversation.output
 `Conversation` is the whole engine: endpointing, barge-in, sentence-level TTS,
 and history. Transports only move PCM16 in and out.
 
+Read the engine top to bottom in `openvoicechat/conversation.py`:
+
+| Where | What it is |
+|---|---|
+| `Conversation.run()` | The call: take an utterance, answer it, repeat |
+| `Conversation.utterances()` | Endpointing state machine: VAD, pre-roll, barge-in, endpoint |
+| `Conversation.respond()` | One turn: STT → LLM stream → sentence → TTS |
+| `Speaker` | The single background task, so TTS overlaps the LLM stream |
+| `Sentences` | Token stream → complete sentences (pysbd) |
+
+Everything else is a leaf: `audio.py` holds PCM16 resampling and the two
+pump functions, `main.py` opens the streams and wires the three tasks, and
+`vad.py`, `local_speech.py`, `config.py` each own one thing.
+
 ## Quickstart
 
 Python 3.11+ is required.
@@ -53,11 +67,14 @@ cp .env.example .env      # then set LLM_API_KEY
 ```
 
 ```python
-# voice.py — talk through the microphone and speakers
+# voice.py — microphone in, speaker out
 import asyncio
 
-from openvoicechat import Config, Conversation
-from openvoicechat.audio import run_local
+import sounddevice as sd
+
+from openvoicechat.audio import default_rate, microphone, speaker
+from openvoicechat.config import Config
+from openvoicechat.conversation import Conversation
 from openvoicechat.local_speech import LocalSpeech
 
 
@@ -68,7 +85,16 @@ async def main() -> None:
         config=Config(),
         on_turn=lambda role, text: print(f"{role.upper()}: {text}"),
     )
-    await run_local(conversation)
+    mic_rate = default_rate(sd, "input")
+    out_rate = default_rate(sd, "output")
+    streams = dict(channels=1, dtype="int16", blocksize=0)
+    with sd.RawInputStream(samplerate=mic_rate, **streams) as mic, sd.RawOutputStream(
+        samplerate=out_rate, **streams
+    ) as out:
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(conversation.run())
+            tasks.create_task(microphone(conversation, mic, mic_rate))
+            tasks.create_task(speaker(conversation, out, out_rate))
 
 
 asyncio.run(main())
@@ -143,7 +169,7 @@ LLM_API_KEY=...
 Everything else is a field on `Config` in `openvoicechat/config.py`:
 
 ```python
-from openvoicechat import Config
+from openvoicechat.config import Config
 
 config = Config(
     llm_model="gpt-6-luna",
@@ -235,17 +261,12 @@ every turn:
 [conversation] latency | v2v=1187ms endpoint=608ms stt=79ms llm_ttft=412ms sentence=731ms tts=88ms turn=1402ms
 ```
 
-Read it from code with `on_latency` or `conversation.last_latency`:
+Read it from code with `conversation.last_latency`, or listen for the
+`turn_done` event:
 
 ```python
-from openvoicechat import Conversation, TurnLatency
-
-
-def on_latency(latency: TurnLatency) -> None:
-    print(f"voice to voice: {latency.voice_to_voice_ms:.0f} ms")
-
-
-conversation = Conversation(speech, config=Config(), on_latency=on_latency)
+last = conversation.last_latency
+print(f"voice to voice: {last.voice_to_voice_ms:.0f} ms")
 ```
 
 The queued number excludes the transport hop. For the real device time, have
@@ -260,13 +281,12 @@ That logs `first audio written (…ms after last speech)`. It is not a true
 acoustic measurement — PortAudio buffers a little audio before it reaches the
 speaker — but it is the closest point the pipeline can observe.
 
-## Call logs and timeline
+## Call logs
 
 `--log` writes a JSONL event stream with wall-clock timestamps:
 
 ```bash
 python main.py --log calls/2026-11-26.jsonl
-python scripts/visualize_call.py calls/2026-11-26.jsonl --open
 ```
 
 Omit the path and the log gets a random id under `logs/`, which is gitignored:
@@ -276,15 +296,8 @@ python main.py --log
 # Recording events to logs/20261126-233412-a1b2c3d4.jsonl
 ```
 
-The report is one HTML file with aggregate numbers, a per-turn latency
-breakdown, a timeline of user speech, endpointing, STT, LLM, TTS, and agent
-audio, and the transcript. It uses inline CSS and SVG, so it needs no network
-and no JavaScript. `--log` is independent of `--verbose`.
-
-`scripts/visualize_call.py` is a small stdlib-only script that lives in the
-repository, not the wheel.
-
-From code, pass `on_event` and write the records wherever you like:
+`--log` is independent of `--verbose`. From code, pass `on_event` and write the
+records wherever you like:
 
 ```python
 import json
