@@ -4,7 +4,7 @@
 one GPU, many calls, no cloud voice APIs, no provider zoo, no platform.
 
 > Status: **0.4.0, alpha.** The local pipeline, mic loop, and `ovc doctor` work.
-> The shared multi-call runtime, Twilio/Daily transports, and `ovc init/run/bench`
+> The shared multi-call runtime, Twilio transport, and `ovc init/run/bench`
 > are the next steps. See [Roadmap](#roadmap).
 
 ## What it is
@@ -138,8 +138,6 @@ They print once per process. The library does not hide them.
 
 ```dotenv
 LLM_API_KEY=...
-AGENT_API_TOKEN=...
-DAILY_API_KEY=...
 ```
 
 Everything else is a field on `Config` in `openvoicechat/config.py`:
@@ -213,29 +211,54 @@ costs bounded memory instead of cancelling its own turn.
 
 Override any of these in code, for example `Config(endpoint_silence_ms=400)`.
 
-## Daily (optional)
+## Latency
 
-The Daily transport lives in `openvoicechat/daily_agent/`. It is a thin call client,
-but it still starts **one process per meeting**, so each meeting loads its own
-models. Moving it onto a shared runtime is the next milestone.
+`Conversation` measures every turn from the last frame of user speech:
 
-```bash
-pip install -e ".[daily,models]"
-python scripts/daily_test.py --open
+| Field | Meaning |
+|---|---|
+| `endpoint_ms` | Last speech → endpoint decision (mostly `endpoint_silence_ms`) |
+| `stt_ms` | Parakeet transcription of the utterance |
+| `llm_ttft_ms` | LLM request → first streamed token |
+| `first_sentence_ms` | Last speech → first complete sentence handed to TTS |
+| `tts_first_ms` | First Kokoro synthesis |
+| `voice_to_voice_ms` | Last speech → first audio chunk queued |
+| `turn_ms` | Last speech → reply fully queued |
+
+`completed` is false when a barge-in or error cut the turn short, so filter
+those out before averaging.
+
+`voice_to_voice_ms` is the headline number. `main.py --verbose` prints it after
+every turn:
+
+```text
+[conversation] latency | v2v=1187ms endpoint=608ms stt=79ms llm_ttft=412ms sentence=731ms tts=88ms turn=1402ms
 ```
 
-The script creates a room, starts the agent server, joins the agent, tails the
-transcript, and cleans up on `Ctrl-C`.
+Read it from code with `on_latency` or `conversation.last_latency`:
 
-Server:
+```python
+from openvoicechat import Conversation, TurnLatency
 
-```bash
-uvicorn openvoicechat.daily_agent.server:app --host 0.0.0.0 --port 8001
+
+def on_latency(latency: TurnLatency) -> None:
+    print(f"voice to voice: {latency.voice_to_voice_ms:.0f} ms")
+
+
+conversation = Conversation(speech, config=Config(), on_latency=on_latency)
 ```
 
-`GET /health` is public; all other routes require
-`Authorization: Bearer $AGENT_API_TOKEN`. `POST /join_meeting` takes
-`meeting_url`, `prompt`, and `conversation_id`.
+The queued number excludes the transport hop. For the real device time, have
+the transport report its first write; the local speaker already does:
+
+```python
+await stream.write(first_frame)
+conversation.audio_written()
+```
+
+That logs `first audio written (…ms after last speech)`. It is not a true
+acoustic measurement — PortAudio buffers a little audio before it reaches the
+speaker — but it is the closest point the pipeline can observe.
 
 ## Tests
 
@@ -253,7 +276,7 @@ Tests use fake providers and no network or GPU.
 | **0.4** | Local-only core, `ovc doctor`, P1 turn-taking fixes |
 | **0.5** | `VoiceRuntime`: load models once, serve many sessions; `ovc init/run/bench` |
 | **0.6** | Twilio Media Streams transport and scaffold |
-| **0.7** | Shared-runtime Daily transport, `ovc eval`, concurrency benchmarks |
+| **0.7** | `ovc eval`, concurrency benchmarks |
 | **1.0** | Stable API, published comparisons, extension docs |
 
 Full browser STT + TTS is a separate later package, not part of the Python core.

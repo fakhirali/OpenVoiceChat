@@ -25,9 +25,6 @@ class Config:
             os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
         )
     )
-    agent_api_token: str = field(
-        default_factory=lambda: os.getenv("AGENT_API_TOKEN", "")
-    )
 
     # LLM endpoint.
     llm_base_url: str = DEFAULT_LLM_BASE_URL
@@ -35,8 +32,6 @@ class Config:
     llm_timeout_s: float = 15.0
 
     # Runtime and turn taking.
-    max_sessions: int = 5
-    data_dir: str = "data"
     sample_rate: int = 16000
     frame_samples: int = 512
     output_chunk_ms: int = 100

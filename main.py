@@ -71,7 +71,7 @@ def main() -> None:
         "--verbose",
         "-v",
         action="store_true",
-        help="print VAD, endpointing, STT, LLM, and TTS timing details",
+        help="print VAD, endpointing, STT, LLM, TTS, and voice-to-voice timings",
     )
     parser.add_argument(
         "--input-device", type=_device, default=None, help="sounddevice input device"

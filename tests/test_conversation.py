@@ -84,6 +84,15 @@ async def wait_for_role(events, role: str, timeout: float = 2.0) -> None:
         await asyncio.sleep(0.005)
 
 
+async def wait_until(predicate, timeout: float = 2.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() > deadline:
+            raise AssertionError("timed out waiting for condition")
+        await asyncio.sleep(0.005)
+
+
 async def stop(conv: Conversation, run_task: asyncio.Task) -> None:
     conv.stop()
     await asyncio.wait_for(run_task, timeout=2)
@@ -141,6 +150,38 @@ async def test_max_utterance_waits_for_silence_instead_of_self_interrupting():
 
     await wait_for_role(events, "assistant")
     assert speech.transcribe_calls == 1
+
+    await stop(conv, run_task)
+
+
+async def test_reports_voice_to_voice_latency():
+    events = []
+    latencies = []
+    conv = Conversation(
+        FakeSpeech(),
+        config=make_config(),
+        client=FakeClient(),
+        on_turn=lambda role, text: events.append((role, text)),
+        on_latency=latencies.append,
+        vad=FakeVAD(),
+    )
+    run_task = await feed_utterance(conv)
+
+    await wait_for_role(events, "assistant")
+    await wait_until(lambda: bool(latencies))
+    latency = latencies[0]
+    assert latency.voice_to_voice_ms is not None
+    assert latency.voice_to_voice_ms >= 0
+    assert latency.endpoint_ms >= 0
+    assert latency.llm_ttft_ms is not None
+    assert latency.tts_first_ms is not None
+    assert latency.turn_ms >= latency.voice_to_voice_ms
+    assert latency.completed is True
+
+    chunk = await asyncio.wait_for(conv.output.get(), timeout=2)
+    assert chunk
+    conv.audio_written()
+    assert conv._first_audio_ref is None
 
     await stop(conv, run_task)
 

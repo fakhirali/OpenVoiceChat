@@ -6,6 +6,7 @@ import logging
 import math
 import time
 from collections import deque
+from dataclasses import dataclass
 
 import pysbd
 from openai import AsyncOpenAI
@@ -14,6 +15,25 @@ from .config import Config
 from .vad import VAD
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TurnLatency:
+    """Per-turn timings in milliseconds, measured from the last user speech frame.
+
+    ``voice_to_voice_ms`` is the number that matters: it ends when the first
+    audio chunk is queued for the transport. Call :meth:`Conversation.audio_written`
+    from a transport to also log when that chunk actually reached the device.
+    """
+
+    voice_to_voice_ms: float | None
+    endpoint_ms: float
+    stt_ms: float
+    llm_ttft_ms: float | None
+    first_sentence_ms: float | None
+    tts_first_ms: float | None
+    turn_ms: float
+    completed: bool
 
 
 class Conversation:
@@ -27,6 +47,7 @@ class Conversation:
         config: Config | None = None,
         client: AsyncOpenAI | None = None,
         on_turn=None,
+        on_latency=None,
         vad=None,
         verbose: bool = False,
     ):
@@ -34,7 +55,11 @@ class Conversation:
         self.config = config or Config()
         self.system_prompt = system_prompt
         self.on_turn = on_turn
+        self.on_latency = on_latency
         self.verbose = verbose
+        self.last_latency: TurnLatency | None = None
+        self._speech_end_at = 0.0
+        self._first_audio_ref: float | None = None
         self._owns_client = client is None
         if client is None:
             if not self.config.llm_api_key:
@@ -105,6 +130,8 @@ class Conversation:
                     self.agent_speaking = False
 
                 voiced = bool(self.vad(frame))
+                if voiced:
+                    self._speech_end_at = time.monotonic()
 
                 if (
                     voiced
@@ -169,7 +196,7 @@ class Conversation:
                 )
                 if speech_ms >= min_speech_ms and utterance:
                     self._turn_task = asyncio.create_task(
-                        self._turn(b"".join(utterance))
+                        self._turn(b"".join(utterance), self._speech_end_at)
                     )
                 else:
                     self._log(f"drop short utterance | speech={speech_ms:.0f}ms")
@@ -185,6 +212,7 @@ class Conversation:
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
             self.agent_speaking = False
+            self._first_audio_ref = None
             _drain(self.output)
             if self._owns_client:
                 with contextlib.suppress(Exception):
@@ -194,32 +222,50 @@ class Conversation:
         self._stop.set()
         if self._turn_task is not None and not self._turn_task.done():
             self._turn_task.cancel()
+        self._first_audio_ref = None
         _drain(self.output)
         with contextlib.suppress(asyncio.QueueFull):
             self.input.put_nowait(None)
 
-    async def _turn(self, pcm: bytes) -> None:
+    async def _turn(self, pcm: bytes, speech_end_at: float) -> None:
         spoken: list[str] = []
         sentences: asyncio.Queue[str | None] = asyncio.Queue(maxsize=16)
         tts_task: asyncio.Task | None = None
         response = ""
         completed = False
         started = time.monotonic()
+        metrics: dict[str, float | None] = {
+            "endpoint_ms": 1000 * (started - speech_end_at),
+            "stt_ms": 0.0,
+            "llm_ttft_ms": None,
+            "first_sentence_ms": None,
+            "tts_first_ms": None,
+            "voice_to_voice_ms": None,
+        }
         self._log(
             f"turn start | pcm={len(pcm) / 2 / self.config.sample_rate * 1000:.0f}ms"
         )
+
+        async def feed_sentence(sentence: str) -> None:
+            if metrics["first_sentence_ms"] is None:
+                metrics["first_sentence_ms"] = 1000 * (
+                    time.monotonic() - speech_end_at
+                )
+            await self._feed(sentences, sentence, tts_task)
+
         try:
             stt_started = time.monotonic()
             text = (await self.speech.transcribe(pcm)).strip()
-            self._log(
-                f"STT ({1000 * (time.monotonic() - stt_started):.0f}ms): {text!r}"
-            )
+            metrics["stt_ms"] = 1000 * (time.monotonic() - stt_started)
+            self._log(f"STT ({metrics['stt_ms']:.0f}ms): {text!r}")
             if not text:
                 return
             self.messages.append({"role": "user", "content": text})
             self._emit("user", text)
 
-            tts_task = asyncio.create_task(self._speak(sentences, spoken))
+            tts_task = asyncio.create_task(
+                self._speak(sentences, spoken, metrics, speech_end_at)
+            )
             segmenter = pysbd.Segmenter(language="en", clean=False)
             buffer = ""
             llm_started = time.monotonic()
@@ -236,8 +282,11 @@ class Conversation:
                         continue
                     if first_token:
                         first_token = False
+                        metrics["llm_ttft_ms"] = 1000 * (
+                            time.monotonic() - llm_started
+                        )
                         self._log(
-                            f"LLM first token ({1000 * (time.monotonic() - llm_started):.0f}ms)"
+                            f"LLM first token ({metrics['llm_ttft_ms']:.0f}ms)"
                         )
                     response += token
                     buffer += token
@@ -247,11 +296,11 @@ class Conversation:
                             for sentence in parts[:-1]:
                                 sentence = sentence.strip()
                                 if sentence:
-                                    await self._feed(sentences, sentence, tts_task)
+                                    await feed_sentence(sentence)
                             buffer = parts[-1]
 
             if buffer.strip():
-                await self._feed(sentences, buffer.strip(), tts_task)
+                await feed_sentence(buffer.strip())
             await self._feed(sentences, None, tts_task)
             await tts_task
 
@@ -282,24 +331,77 @@ class Conversation:
                     tts_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await tts_task
+            self._record_latency(metrics, speech_end_at, completed)
 
-    async def _speak(self, sentences: asyncio.Queue, spoken: list[str]) -> None:
+    async def _speak(
+        self,
+        sentences: asyncio.Queue,
+        spoken: list[str],
+        metrics: dict[str, float | None],
+        speech_end_at: float,
+    ) -> None:
         while True:
             sentence = await sentences.get()
             if sentence is None:
                 return
             tts_started = time.monotonic()
             audio = await self.speech.synthesize(sentence)
+            elapsed_ms = 1000 * (time.monotonic() - tts_started)
+            if metrics["tts_first_ms"] is None:
+                metrics["tts_first_ms"] = elapsed_ms
             self._log(
-                f"TTS ({1000 * (time.monotonic() - tts_started):.0f}ms, "
-                f"{len(audio)} bytes): {sentence!r}"
+                f"TTS ({elapsed_ms:.0f}ms, {len(audio)} bytes): {sentence!r}"
             )
             if not audio:
                 continue
             spoken.append(sentence)
             self.agent_speaking = True
+            if metrics["voice_to_voice_ms"] is None:
+                metrics["voice_to_voice_ms"] = 1000 * (
+                    time.monotonic() - speech_end_at
+                )
+                self._first_audio_ref = speech_end_at
+                self._log(
+                    f"voice-to-voice ({metrics['voice_to_voice_ms']:.0f}ms) | "
+                    "last speech -> first audio queued"
+                )
             for start in range(0, len(audio), self._chunk_bytes):
                 await self.output.put(audio[start : start + self._chunk_bytes])
+
+    def audio_written(self) -> None:
+        """Call when a transport writes its first output frame of a reply."""
+        if self._first_audio_ref is None:
+            return
+        ref, self._first_audio_ref = self._first_audio_ref, None
+        self._log(
+            f"first audio written ({1000 * (time.monotonic() - ref):.0f}ms "
+            "after last speech)"
+        )
+
+    def _record_latency(
+        self,
+        metrics: dict[str, float | None],
+        speech_end_at: float,
+        completed: bool,
+    ) -> None:
+        latency = TurnLatency(
+            voice_to_voice_ms=metrics["voice_to_voice_ms"],
+            endpoint_ms=metrics["endpoint_ms"] or 0.0,
+            stt_ms=metrics["stt_ms"] or 0.0,
+            llm_ttft_ms=metrics["llm_ttft_ms"],
+            first_sentence_ms=metrics["first_sentence_ms"],
+            tts_first_ms=metrics["tts_first_ms"],
+            turn_ms=1000 * (time.monotonic() - speech_end_at),
+            completed=completed,
+        )
+        self.last_latency = latency
+        self._log(f"latency | {_format_latency(latency)}")
+        if self.on_latency is None:
+            return
+        try:
+            self.on_latency(latency)
+        except Exception:
+            log.exception("on_latency callback failed")
 
     @staticmethod
     async def _feed(queue: asyncio.Queue, item, tts_task: asyncio.Task) -> None:
@@ -323,6 +425,7 @@ class Conversation:
         )
         task, self._turn_task = self._turn_task, None
         self.agent_speaking = False
+        self._first_audio_ref = None
         if task is not None and not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -353,3 +456,15 @@ def _drain(queue: asyncio.Queue) -> None:
             queue.get_nowait()
         except asyncio.QueueEmpty:
             return
+
+
+def _format_latency(latency: TurnLatency) -> str:
+    def ms(value: float | None) -> str:
+        return "-" if value is None else f"{value:.0f}ms"
+
+    return (
+        f"v2v={ms(latency.voice_to_voice_ms)} endpoint={ms(latency.endpoint_ms)} "
+        f"stt={ms(latency.stt_ms)} llm_ttft={ms(latency.llm_ttft_ms)} "
+        f"sentence={ms(latency.first_sentence_ms)} tts={ms(latency.tts_first_ms)} "
+        f"turn={ms(latency.turn_ms)}"
+    )

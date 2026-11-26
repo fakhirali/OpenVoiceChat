@@ -72,6 +72,7 @@ async def speaker(conversation: Conversation, stream, rate: int) -> None:
         data = resampler.process(pcm)
         if data:
             await asyncio.to_thread(stream.write, data)
+            conversation.audio_written()
 
 
 async def run_local(

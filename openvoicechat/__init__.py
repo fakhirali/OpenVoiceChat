@@ -7,7 +7,7 @@ try:
 except PackageNotFoundError:  # running from a source checkout
     __version__ = "0.4.1"
 
-__all__ = ["VAD", "Config", "Conversation", "__version__"]
+__all__ = ["VAD", "Config", "Conversation", "TurnLatency", "__version__"]
 
 
 def __getattr__(name: str):
@@ -19,6 +19,10 @@ def __getattr__(name: str):
         from .conversation import Conversation
 
         return Conversation
+    if name == "TurnLatency":
+        from .conversation import TurnLatency
+
+        return TurnLatency
     if name == "VAD":
         from .vad import VAD
 
