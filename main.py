@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 
 from openvoicechat.audio import run_local
 from openvoicechat.config import DEFAULT_LLM_BASE_URL, DEFAULT_LLM_MODEL, Config
@@ -20,7 +21,7 @@ def _device(value: str):
         return value
 
 
-async def run(args: argparse.Namespace) -> None:
+async def run(args: argparse.Namespace, log_handle=None) -> None:
     try:
         speech = LocalSpeech(voice=args.voice)
     except ImportError as exc:
@@ -28,6 +29,15 @@ async def run(args: argparse.Namespace) -> None:
             "Missing local model dependencies. Install with: "
             'pip install -e ".[models]"'
         ) from exc
+
+    on_event = None
+    if log_handle is not None:
+
+        def on_event(event: dict) -> None:
+            log_handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+            log_handle.flush()
+
+        print(f"Recording events to {args.log}", flush=True)
 
     config = Config(llm_model=args.model, llm_base_url=args.base_url)
     try:
@@ -37,6 +47,7 @@ async def run(args: argparse.Namespace) -> None:
             system_prompt=args.prompt,
             config=config,
             on_turn=lambda role, text: print(f"{role.upper()}: {text}", flush=True),
+            on_event=on_event,
             verbose=args.verbose,
         )
         try:
@@ -74,6 +85,11 @@ def main() -> None:
         help="print VAD, endpointing, STT, LLM, TTS, and voice-to-voice timings",
     )
     parser.add_argument(
+        "--log",
+        metavar="PATH",
+        help="write a JSONL event log for scripts/visualize_call.py",
+    )
+    parser.add_argument(
         "--input-device", type=_device, default=None, help="sounddevice input device"
     )
     parser.add_argument(
@@ -81,7 +97,11 @@ def main() -> None:
     )
     args = parser.parse_args()
     try:
-        asyncio.run(run(args))
+        if args.log:
+            with open(args.log, "w", encoding="utf-8") as log_handle:
+                asyncio.run(run(args, log_handle))
+        else:
+            asyncio.run(run(args))
     except KeyboardInterrupt:
         print("\nStopped.", flush=True)
 

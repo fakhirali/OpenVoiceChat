@@ -260,6 +260,41 @@ That logs `first audio written (…ms after last speech)`. It is not a true
 acoustic measurement — PortAudio buffers a little audio before it reaches the
 speaker — but it is the closest point the pipeline can observe.
 
+## Call logs and timeline
+
+`--log` writes a JSONL event stream with wall-clock timestamps:
+
+```bash
+python main.py --log calls/2026-11-26.jsonl
+python scripts/visualize_call.py calls/2026-11-26.jsonl --open
+```
+
+The report is one HTML file with aggregate numbers, a per-turn latency
+breakdown, a timeline of user speech, endpointing, STT, LLM, TTS, and agent
+audio, and the transcript. It uses inline CSS and SVG, so it needs no network
+and no JavaScript. `--log` is independent of `--verbose`.
+
+`scripts/visualize_call.py` is a small stdlib-only script that lives in the
+repository, not the wheel.
+
+From code, pass `on_event` and write the records wherever you like:
+
+```python
+import json
+
+
+def on_event(event: dict) -> None:
+    with open("call.jsonl", "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event) + "\n")
+
+
+conversation = Conversation(speech, config=Config(), on_event=on_event)
+```
+
+Every record has `event` and `t` (epoch seconds). The names are `call_start`,
+`speech_start`, `endpoint`, `stt`, `llm_first_token`, `tts`,
+`first_audio_written`, `barge_in`, `dropped`, `turn_done`, and `call_end`.
+
 ## Tests
 
 ```bash

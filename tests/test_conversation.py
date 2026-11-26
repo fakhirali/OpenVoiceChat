@@ -186,6 +186,44 @@ async def test_reports_voice_to_voice_latency():
     await stop(conv, run_task)
 
 
+async def test_emits_events_for_visualization():
+    emitted = []
+    conv = Conversation(
+        FakeSpeech(),
+        config=make_config(),
+        client=FakeClient(),
+        on_event=emitted.append,
+        vad=FakeVAD(),
+    )
+    run_task = await feed_utterance(conv)
+    await asyncio.wait_for(conv.output.get(), timeout=2)
+    conv.audio_written()
+    await wait_until(lambda: any(e["event"] == "turn_done" for e in emitted))
+
+    names = [event["event"] for event in emitted]
+    assert names[0] == "call_start"
+    for name in (
+        "speech_start",
+        "endpoint",
+        "stt",
+        "llm_first_token",
+        "tts",
+        "first_audio_written",
+        "turn_done",
+    ):
+        assert name in names
+
+    done = next(event for event in emitted if event["event"] == "turn_done")
+    assert done["user"] == "hello"
+    assert done["assistant"] == "Hi there."
+    assert done["completed"] is True
+    assert done["voice_to_voice_ms"] is not None
+
+    conv.stop()
+    await run_task
+    assert emitted[-1]["event"] == "call_end"
+
+
 async def test_interrupt_cancels_turn_and_drains_output():
     events = []
     conv = make_conversation(events)

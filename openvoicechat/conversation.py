@@ -48,6 +48,7 @@ class Conversation:
         client: AsyncOpenAI | None = None,
         on_turn=None,
         on_latency=None,
+        on_event=None,
         vad=None,
         verbose: bool = False,
     ):
@@ -56,6 +57,7 @@ class Conversation:
         self.system_prompt = system_prompt
         self.on_turn = on_turn
         self.on_latency = on_latency
+        self.on_event = on_event
         self.verbose = verbose
         self.last_latency: TurnLatency | None = None
         self._speech_end_at = 0.0
@@ -87,6 +89,11 @@ class Conversation:
         self._turn_task: asyncio.Task | None = None
 
     async def run(self) -> None:
+        self._event(
+            "call_start",
+            sample_rate=self.config.sample_rate,
+            endpoint_silence_ms=self.config.endpoint_silence_ms,
+        )
         pre_roll: deque[bytes] = deque(
             maxlen=math.ceil(self.config.pre_roll_ms / self._frame_ms)
         )
@@ -156,6 +163,9 @@ class Conversation:
                             self._log(
                                 f"speech start | pre-roll={pre_roll_ms:.0f}ms"
                             )
+                            self._event(
+                                "speech_start", pre_roll_ms=round(pre_roll_ms, 1)
+                            )
                     else:
                         voiced_run = 0
                         onset.clear()
@@ -195,10 +205,18 @@ class Conversation:
                     f"utterance={utterance_ms:.0f}ms speech={speech_ms:.0f}ms"
                 )
                 if speech_ms >= min_speech_ms and utterance:
+                    self._event(
+                        "endpoint",
+                        reason=reason,
+                        silence_ms=round(silence_ms, 1),
+                        speech_ms=round(speech_ms, 1),
+                        utterance_ms=round(utterance_ms, 1),
+                    )
                     self._turn_task = asyncio.create_task(
                         self._turn(b"".join(utterance), self._speech_end_at)
                     )
                 else:
+                    self._event("dropped", speech_ms=round(speech_ms, 1))
                     self._log(f"drop short utterance | speech={speech_ms:.0f}ms")
                 reset()
                 if pre_roll.maxlen:
@@ -211,6 +229,7 @@ class Conversation:
                     task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
+            self._event("call_end")
             self.agent_speaking = False
             self._first_audio_ref = None
             _drain(self.output)
@@ -232,6 +251,7 @@ class Conversation:
         sentences: asyncio.Queue[str | None] = asyncio.Queue(maxsize=16)
         tts_task: asyncio.Task | None = None
         response = ""
+        text = ""
         completed = False
         started = time.monotonic()
         metrics: dict[str, float | None] = {
@@ -258,6 +278,7 @@ class Conversation:
             text = (await self.speech.transcribe(pcm)).strip()
             metrics["stt_ms"] = 1000 * (time.monotonic() - stt_started)
             self._log(f"STT ({metrics['stt_ms']:.0f}ms): {text!r}")
+            self._event("stt", ms=round(metrics["stt_ms"], 1), text=text)
             if not text:
                 return
             self.messages.append({"role": "user", "content": text})
@@ -287,6 +308,10 @@ class Conversation:
                         )
                         self._log(
                             f"LLM first token ({metrics['llm_ttft_ms']:.0f}ms)"
+                        )
+                        self._event(
+                            "llm_first_token",
+                            ms=round(metrics["llm_ttft_ms"], 1),
                         )
                     response += token
                     buffer += token
@@ -331,7 +356,13 @@ class Conversation:
                     tts_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await tts_task
-            self._record_latency(metrics, speech_end_at, completed)
+            self._record_latency(
+                metrics,
+                speech_end_at,
+                completed,
+                text,
+                response.strip() or " ".join(spoken).strip(),
+            )
 
     async def _speak(
         self,
@@ -351,6 +382,13 @@ class Conversation:
                 metrics["tts_first_ms"] = elapsed_ms
             self._log(
                 f"TTS ({elapsed_ms:.0f}ms, {len(audio)} bytes): {sentence!r}"
+            )
+            self._event(
+                "tts",
+                ms=round(elapsed_ms, 1),
+                bytes=len(audio),
+                audio_ms=round(len(audio) / 2 / self.config.sample_rate * 1000, 1),
+                text=sentence,
             )
             if not audio:
                 continue
@@ -373,16 +411,19 @@ class Conversation:
         if self._first_audio_ref is None:
             return
         ref, self._first_audio_ref = self._first_audio_ref, None
+        elapsed_ms = 1000 * (time.monotonic() - ref)
         self._log(
-            f"first audio written ({1000 * (time.monotonic() - ref):.0f}ms "
-            "after last speech)"
+            f"first audio written ({elapsed_ms:.0f}ms after last speech)"
         )
+        self._event("first_audio_written", ms=round(elapsed_ms, 1))
 
     def _record_latency(
         self,
         metrics: dict[str, float | None],
         speech_end_at: float,
         completed: bool,
+        user_text: str,
+        assistant_text: str,
     ) -> None:
         latency = TurnLatency(
             voice_to_voice_ms=metrics["voice_to_voice_ms"],
@@ -396,6 +437,19 @@ class Conversation:
         )
         self.last_latency = latency
         self._log(f"latency | {_format_latency(latency)}")
+        self._event(
+            "turn_done",
+            user=user_text,
+            assistant=assistant_text,
+            completed=completed,
+            voice_to_voice_ms=latency.voice_to_voice_ms,
+            endpoint_ms=round(latency.endpoint_ms, 1),
+            stt_ms=round(latency.stt_ms, 1),
+            llm_ttft_ms=latency.llm_ttft_ms,
+            first_sentence_ms=latency.first_sentence_ms,
+            tts_first_ms=latency.tts_first_ms,
+            turn_ms=round(latency.turn_ms, 1),
+        )
         if self.on_latency is None:
             return
         try:
@@ -423,6 +477,7 @@ class Conversation:
         self._log(
             f"barge-in | cancelling turn, output_chunks={self.output.qsize()}"
         )
+        self._event("barge_in")
         task, self._turn_task = self._turn_task, None
         self.agent_speaking = False
         self._first_audio_ref = None
@@ -435,6 +490,15 @@ class Conversation:
     def _log(self, message: str) -> None:
         if self.verbose:
             print(f"[conversation] {message}", flush=True)
+
+    def _event(self, name: str, **fields) -> None:
+        if self.on_event is None:
+            return
+        record = {"event": name, "t": round(time.time(), 6), **fields}
+        try:
+            self.on_event(record)
+        except Exception:
+            log.exception("on_event callback failed")
 
     def _emit(self, role: str, text: str) -> None:
         if self.on_turn is None:
