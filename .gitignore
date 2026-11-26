@@ -10,6 +10,7 @@ venv/
 # Local state
 .env
 data/
+logs/
 .pytest_cache/
 .ruff_cache/
 

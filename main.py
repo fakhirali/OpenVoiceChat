@@ -5,6 +5,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import secrets
+from datetime import datetime
+from pathlib import Path
 
 from openvoicechat.audio import run_local
 from openvoicechat.config import DEFAULT_LLM_BASE_URL, DEFAULT_LLM_MODEL, Config
@@ -19,6 +22,11 @@ def _device(value: str):
         return int(value)
     except ValueError:
         return value
+
+
+def _auto_log_path() -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Path("logs") / f"{stamp}-{secrets.token_hex(4)}.jsonl"
 
 
 async def run(args: argparse.Namespace, log_handle=None) -> None:
@@ -36,8 +44,6 @@ async def run(args: argparse.Namespace, log_handle=None) -> None:
         def on_event(event: dict) -> None:
             log_handle.write(json.dumps(event, ensure_ascii=False) + "\n")
             log_handle.flush()
-
-        print(f"Recording events to {args.log}", flush=True)
 
     config = Config(llm_model=args.model, llm_base_url=args.base_url)
     try:
@@ -86,8 +92,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--log",
+        nargs="?",
+        const="",
         metavar="PATH",
-        help="write a JSONL event log for scripts/visualize_call.py",
+        help=(
+            "write a JSONL event log; omit PATH for "
+            "logs/<timestamp>-<random>.jsonl"
+        ),
     )
     parser.add_argument(
         "--input-device", type=_device, default=None, help="sounddevice input device"
@@ -96,9 +107,14 @@ def main() -> None:
         "--output-device", type=_device, default=None, help="sounddevice output device"
     )
     args = parser.parse_args()
+    log_path = None
+    if args.log is not None:
+        log_path = Path(args.log) if args.log else _auto_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        if args.log:
-            with open(args.log, "w", encoding="utf-8") as log_handle:
+        if log_path is not None:
+            with log_path.open("w", encoding="utf-8") as log_handle:
+                print(f"Recording events to {log_path}", flush=True)
                 asyncio.run(run(args, log_handle))
         else:
             asyncio.run(run(args))

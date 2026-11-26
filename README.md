@@ -269,6 +269,13 @@ python main.py --log calls/2026-11-26.jsonl
 python scripts/visualize_call.py calls/2026-11-26.jsonl --open
 ```
 
+Omit the path and the log gets a random id under `logs/`, which is gitignored:
+
+```bash
+python main.py --log
+# Recording events to logs/20261126-233412-a1b2c3d4.jsonl
+```
+
 The report is one HTML file with aggregate numbers, a per-turn latency
 breakdown, a timeline of user speech, endpointing, STT, LLM, TTS, and agent
 audio, and the transcript. It uses inline CSS and SVG, so it needs no network
