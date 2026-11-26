@@ -257,7 +257,7 @@ class Conversation:
             self.messages.append({"role": "user", "content": text})
             self._emit("user", text)
 
-            splitter = Sentences()
+            buffer = ""
             async with Speaker(self, speech_end_at) as speaker:
                 stream = await self.client.chat.completions.create(
                     model=self.config.llm_model,
@@ -276,10 +276,11 @@ class Conversation:
                             self._log(f"LLM first token ({ms:.0f}ms)")
                             self._event("llm_first_token", ms=round(ms, 1))
                         response += token
-                        for sentence in splitter.feed(token):
+                        buffer, complete = split_sentences(buffer, token)
+                        for sentence in complete:
                             await speaker.say(sentence)
-                for sentence in splitter.flush():
-                    await speaker.say(sentence)
+                if buffer.strip():
+                    await speaker.say(buffer.strip())
 
             if response.strip():
                 self.messages.append({"role": "assistant", "content": response})
@@ -498,33 +499,22 @@ class Speaker:
                 await conversation.output.put(audio[start : start + chunk])
 
 
-class Sentences:
-    """Turns a token stream into complete sentences as it arrives.
+SEGMENTER = pysbd.Segmenter(language="en", clean=False)
 
-    The LLM is quoted freely, so a period alone is not a boundary; pysbd
-    decides, and the text after the last boundary stays buffered until the next
-    token completes it (or :meth:`flush` ends the reply).
+
+def split_sentences(buffer: str, token: str) -> tuple[str, list[str]]:
+    """Append one LLM token; return the pending buffer and any complete sentences.
+
+    A period is not a boundary on its own (the model quotes text), so pysbd
+    decides and the text after the last boundary stays pending.
     """
-
-    MARKS = ".!?\n"
-
-    def __init__(self) -> None:
-        self._segmenter = pysbd.Segmenter(language="en", clean=False)
-        self._buffer = ""
-
-    def feed(self, token: str) -> list[str]:
-        self._buffer += token
-        if not any(mark in token for mark in self.MARKS):
-            return []
-        parts = self._segmenter.segment(self._buffer)
-        if len(parts) < 2:
-            return []
-        self._buffer = parts[-1]
-        return [sentence for sentence in (part.strip() for part in parts[:-1]) if sentence]
-
-    def flush(self) -> list[str]:
-        pending, self._buffer = self._buffer.strip(), ""
-        return [pending] if pending else []
+    buffer += token
+    if not any(mark in token for mark in ".!?\n"):
+        return buffer, []
+    parts = SEGMENTER.segment(buffer)
+    if len(parts) < 2:
+        return buffer, []
+    return parts[-1], [text for text in (part.strip() for part in parts[:-1]) if text]
 
 
 def _drain(queue: asyncio.Queue) -> None:

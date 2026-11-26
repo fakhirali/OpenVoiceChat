@@ -4,7 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 from openvoicechat.config import Config
-from openvoicechat.conversation import Conversation, Sentences
+from openvoicechat.conversation import Conversation, split_sentences
 
 
 class FakeVAD:
@@ -256,11 +256,11 @@ async def test_interrupt_cancels_turn_and_drains_output():
     assert conv.agent_speaking is False
 
 
-def test_sentences_split_on_boundaries_and_keep_the_pending_text():
-    splitter = Sentences()
-
-    assert splitter.feed("Hi ") == []
-    assert splitter.feed("there. ") == []
-    assert splitter.feed("How are you? ") == ["Hi there."]
-    assert splitter.flush() == ["How are you?"]
-    assert splitter.flush() == []
+def test_split_sentences_keeps_the_pending_text():
+    buffer, complete = split_sentences("", "Hi ")
+    assert (buffer, complete) == ("Hi ", [])
+    buffer, complete = split_sentences(buffer, "there. ")
+    assert (buffer, complete) == ("Hi there. ", [])
+    buffer, complete = split_sentences(buffer, "How are you? ")
+    assert complete == ["Hi there."]
+    assert buffer.strip() == "How are you?"

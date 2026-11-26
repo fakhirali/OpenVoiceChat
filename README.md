@@ -51,7 +51,7 @@ Read the engine top to bottom in `openvoicechat/conversation.py`:
 | `Conversation.utterances()` | Endpointing state machine: VAD, pre-roll, barge-in, endpoint |
 | `Conversation.respond()` | One turn: STT → LLM stream → sentence → TTS |
 | `Speaker` | The single background task, so TTS overlaps the LLM stream |
-| `Sentences` | Token stream → complete sentences (pysbd) |
+| `split_sentences()` | Token stream → complete sentences (pysbd) |
 
 Everything else is a leaf: `audio.py` holds PCM16 resampling and the two
 pump functions, `main.py` opens the streams and wires the three tasks, and
