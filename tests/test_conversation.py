@@ -4,7 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 from openvoicechat.config import Config
-from openvoicechat.conversation import Conversation
+from openvoicechat.conversation import Conversation, split_sentences
 
 
 class FakeVAD:
@@ -29,6 +29,11 @@ class FakeSpeech:
 
     async def aclose(self) -> None:
         pass
+
+
+class BrokenSpeech(FakeSpeech):
+    async def synthesize(self, text: str) -> bytes:
+        raise RuntimeError("tts is down")
 
 
 class FakeCompletions:
@@ -57,7 +62,7 @@ def make_config() -> Config:
     )
 
 
-def make_conversation(events, speech=None) -> Conversation:
+def make_conversation(events, speech=None, **kwargs) -> Conversation:
     return Conversation(
         speech or FakeSpeech(),
         system_prompt="You are helpful.",
@@ -65,6 +70,7 @@ def make_conversation(events, speech=None) -> Conversation:
         client=FakeClient(),
         on_turn=lambda role, text: events.append((role, text)),
         vad=FakeVAD(),
+        **kwargs,
     )
 
 
@@ -156,20 +162,12 @@ async def test_max_utterance_waits_for_silence_instead_of_self_interrupting():
 
 async def test_reports_voice_to_voice_latency():
     events = []
-    latencies = []
-    conv = Conversation(
-        FakeSpeech(),
-        config=make_config(),
-        client=FakeClient(),
-        on_turn=lambda role, text: events.append((role, text)),
-        on_latency=latencies.append,
-        vad=FakeVAD(),
-    )
+    conv = make_conversation(events)
     run_task = await feed_utterance(conv)
 
     await wait_for_role(events, "assistant")
-    await wait_until(lambda: bool(latencies))
-    latency = latencies[0]
+    await wait_until(lambda: conv.last_latency is not None)
+    latency = conv.last_latency
     assert latency.voice_to_voice_ms is not None
     assert latency.voice_to_voice_ms >= 0
     assert latency.endpoint_ms >= 0
@@ -188,13 +186,7 @@ async def test_reports_voice_to_voice_latency():
 
 async def test_emits_events_for_visualization():
     emitted = []
-    conv = Conversation(
-        FakeSpeech(),
-        config=make_config(),
-        client=FakeClient(),
-        on_event=emitted.append,
-        vad=FakeVAD(),
-    )
+    conv = make_conversation([], on_event=emitted.append)
     run_task = await feed_utterance(conv)
     await asyncio.wait_for(conv.output.get(), timeout=2)
     conv.audio_written()
@@ -224,6 +216,20 @@ async def test_emits_events_for_visualization():
     assert emitted[-1]["event"] == "call_end"
 
 
+async def test_a_broken_synthesizer_ends_the_turn():
+    events = []
+    speech = BrokenSpeech()
+    conv = make_conversation(events, speech=speech)
+    run_task = await feed_utterance(conv)
+
+    await wait_until(lambda: any(role == "error" for role, _ in events))
+    await wait_until(lambda: conv.last_latency is not None)
+    assert conv.last_latency.completed is False
+    assert speech.transcribe_calls == 1
+
+    await stop(conv, run_task)
+
+
 async def test_interrupt_cancels_turn_and_drains_output():
     events = []
     conv = make_conversation(events)
@@ -242,9 +248,19 @@ async def test_interrupt_cancels_turn_and_drains_output():
     await started.wait()
     await conv.output.put(b"stale audio")
 
-    await conv._interrupt()
+    await conv.interrupt()
 
     assert cancelled.is_set()
     assert conv._turn_task is None
     assert conv.output.empty()
     assert conv.agent_speaking is False
+
+
+def test_split_sentences_keeps_the_pending_text():
+    buffer, complete = split_sentences("", "Hi ")
+    assert (buffer, complete) == ("Hi ", [])
+    buffer, complete = split_sentences(buffer, "there. ")
+    assert (buffer, complete) == ("Hi there. ", [])
+    buffer, complete = split_sentences(buffer, "How are you? ")
+    assert complete == ["Hi there."]
+    assert buffer.strip() == "How are you?"

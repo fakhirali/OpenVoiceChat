@@ -1,4 +1,8 @@
-"""Run the local voice loop: microphone -> VAD -> Parakeet -> LLM -> Kokoro -> speaker."""
+"""Run the local voice loop: microphone -> VAD -> Parakeet -> LLM -> Kokoro -> speaker.
+
+The wiring lives here, on purpose: open the two audio streams, run the
+conversation, pump the microphone in, and pump the speaker out.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +13,7 @@ import secrets
 from datetime import datetime
 from pathlib import Path
 
-from openvoicechat.audio import run_local
+from openvoicechat.audio import SPEECH_RATE, default_rate, microphone, speaker
 from openvoicechat.config import DEFAULT_LLM_BASE_URL, DEFAULT_LLM_MODEL, Config
 from openvoicechat.conversation import Conversation
 from openvoicechat.local_speech import DEFAULT_VOICE, LocalSpeech
@@ -30,6 +34,13 @@ def _auto_log_path() -> Path:
 
 
 async def run(args: argparse.Namespace, log_handle=None) -> None:
+    try:
+        import sounddevice as sd
+    except ImportError as exc:
+        raise SystemExit(
+            'Missing audio dependencies. Install with: pip install -e ".[local]"'
+        ) from exc
+
     try:
         speech = LocalSpeech(voice=args.voice)
     except ImportError as exc:
@@ -56,14 +67,35 @@ async def run(args: argparse.Namespace, log_handle=None) -> None:
             on_event=on_event,
             verbose=args.verbose,
         )
-        try:
-            await run_local(
-                conversation,
-                input_device=args.input_device,
-                output_device=args.output_device,
-            )
-        except ImportError as exc:
-            raise SystemExit(str(exc)) from exc
+
+        input_rate = default_rate(sd, "input", args.input_device)
+        output_rate = default_rate(sd, "output", args.output_device)
+        print(
+            f"Audio: mic {input_rate} Hz, speaker {output_rate} Hz, speech {SPEECH_RATE} Hz",
+            flush=True,
+        )
+        with sd.RawInputStream(
+            samplerate=input_rate,
+            channels=1,
+            dtype="int16",
+            blocksize=0,
+            device=args.input_device,
+        ) as mic, sd.RawOutputStream(
+            samplerate=output_rate,
+            channels=1,
+            dtype="int16",
+            blocksize=0,
+            device=args.output_device,
+        ) as out:
+            print("Listening. Ctrl-C to stop.", flush=True)
+            async with asyncio.TaskGroup() as tasks:
+                tasks.create_task(conversation.run(), name="conversation")
+                tasks.create_task(
+                    microphone(conversation, mic, input_rate), name="microphone"
+                )
+                tasks.create_task(
+                    speaker(conversation, out, output_rate), name="speaker"
+                )
     finally:
         await speech.aclose()
 
